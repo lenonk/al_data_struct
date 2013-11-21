@@ -31,6 +31,7 @@ SET(test_exe_SRCS
 
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -export-dynamic -avoid-version")
 add_library(al_data_struct SHARED ${al_data_struct_SRCS})
+target_link_libraries(al_data_struct pthread)
 
 add_executable(test_lib ${test_exe_SRCS})
 target_link_libraries(test_lib al_data_struct)

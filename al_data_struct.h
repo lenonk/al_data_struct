@@ -1,6 +1,8 @@
 #ifndef __AL_DATA_STRUCT_H__
 #define __AL_DATA_STRUCT_H__
 
+#include <pthread.h>
+
 // ****************************************************
 // *                    Hash table                    *
 // ****************************************************
@@ -29,29 +31,33 @@ void *ht_get(hash_table_t *ht, char *key);
 
 typedef void (*free_fn_t)(void *);
 typedef int8_t (*list_iterator_t)(void *, void *);
+typedef int8_t (*list_cmp_t)(void *, void *);
 
 typedef struct list_node_s {
-    void *data;
     struct list_node_s *next;
     struct list_node_s *prev;
+    void *data;
 } list_node_t;
 
 typedef struct {
     int32_t list_size;
-    int32_t node_size;
     list_node_t *head;
     list_node_t *tail;
     free_fn_t free_fn;
+    pthread_rwlock_t mutex;
 } list_t;
 
 int32_t list_create(list_t **list, free_fn_t free_fn);
 int32_t list_prepend(list_t *list, void *elem);
 int32_t list_append(list_t *list, void *elem);
 int32_t list_size(list_t *list);
+int32_t list_head(list_t *list, void **node, int8_t remove);
+int32_t list_tail(list_t *list, void **node, int8_t remove);
+int32_t list_next(list_t *list, void **node);
+void list_sort(list_t *list, list_cmp_t cmp);
 void list_destroy(list_t *list);
 void list_for_each(list_t *list, list_iterator_t iterator, void *data);
-void list_head(list_t *list, void **node, int8_t remove);
-void list_tail(list_t *list, void **node, int8_t remove);
+char *list_get_last_err();
 
 // ****************************************************
 // *                        BST                       *

@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <assert.h>
 
 #include "al_data_struct.h"
 
@@ -26,6 +27,8 @@ list_create(list_t **list, free_fn_t free_fn) {
     (*list)->tail = NULL;
     (*list)->free_fn = free_fn;
 
+    pthread_rwlock_init(&((*list)->mutex), NULL);
+
     return 0;
 }
 
@@ -33,6 +36,7 @@ void
 list_destroy(list_t *list) {
     list_node_t *cur_node;
 
+    pthread_rwlock_wrlock(&list->mutex);
     while (list->head) {
         cur_node = list->head;
         list->head = cur_node->next;
@@ -44,6 +48,7 @@ list_destroy(list_t *list) {
 
         free(cur_node);
     }
+    pthread_rwlock_unlock(&list->mutex);
 }
 
 int32_t
@@ -57,6 +62,7 @@ list_prepend(list_t *list, void *elem) {
 
     new_node->data = elem;
 
+    pthread_rwlock_wrlock(&list->mutex);
     if (list->list_size == 0) {
         list->head = list->tail = new_node;
     }
@@ -68,6 +74,7 @@ list_prepend(list_t *list, void *elem) {
     }
 
     list->list_size++;
+    pthread_rwlock_unlock(&list->mutex);
 
     return 0;
 }
@@ -83,6 +90,7 @@ list_append(list_t *list, void *elem) {
 
     new_node->data = elem;
 
+    pthread_rwlock_wrlock(&list->mutex);
     if (list->list_size == 0) {
         list->head = list->tail = new_node;
     }
@@ -93,6 +101,7 @@ list_append(list_t *list, void *elem) {
     }
 
     list->list_size++;
+    pthread_rwlock_unlock(&list->mutex);
 
     return 0;
 }
@@ -105,24 +114,31 @@ list_for_each(list_t *list, list_iterator_t it, void *data) {
     if (!(it && (cur_node = list->head)))
         return;
 
+    pthread_rwlock_rdlock(&list->mutex);
     do {
         rc = it(cur_node->data, data);
         cur_node = cur_node->next;
-    } while (cur_node && rc);
+    } while (cur_node && rc >= 0);
+    pthread_rwlock_unlock(&list->mutex);
 
     return;
 }
 
-void
+int32_t
 list_head(list_t *list, void **node, int8_t remove) {
     list_node_t *cur_node = NULL;
 
-    if (!list->head)
-        return;
+    if (!list->head) {
+        *node = NULL;
+        return -1;
+    }
 
+    pthread_rwlock_rdlock(&list->mutex);
     cur_node = list->head;
 
     if (remove) {
+        pthread_rwlock_unlock(&list->mutex);
+        pthread_rwlock_wrlock(&list->mutex);
         if (list->head == list->tail) {
             list->head = list->tail = NULL;
         }
@@ -135,20 +151,26 @@ list_head(list_t *list, void **node, int8_t remove) {
     }
 
     *node = cur_node->data;
+    pthread_rwlock_unlock(&list->mutex);
 
-    return;
+    return 0;
 }
 
-void
+int32_t
 list_tail(list_t *list, void **node, int8_t remove) {
     list_node_t *cur_node = NULL;
 
-    if (!list->tail)
-        return;
+    if (!list->tail) {
+        *node = NULL;
+        return -1;
+    }
 
+    pthread_rwlock_rdlock(&list->mutex);
     cur_node = list->tail;
 
     if (remove) {
+        pthread_rwlock_unlock(&list->mutex);
+        pthread_rwlock_wrlock(&list->mutex);
         if (list->tail == list->head) {
             list->tail = list->head = NULL;
         }
@@ -161,6 +183,75 @@ list_tail(list_t *list, void **node, int8_t remove) {
     }
 
     *node = cur_node->data;
+    pthread_rwlock_unlock(&list->mutex);
+
+    return 0;
+}
+
+int32_t
+list_next(list_t *list, void **node) {
+    static list_node_t *cur_node = NULL;
+
+    if (!list_head) {
+        *node = NULL;
+        return -1;
+    }
+
+    pthread_rwlock_rdlock(&list->mutex);
+    if (list != NULL) {
+        cur_node = list->head;
+    }
+    else {
+        cur_node = cur_node->next;
+    }
+
+    if (!cur_node) {
+        *node = NULL;
+        return 0;
+    }
+
+    *node = cur_node->data;
+    pthread_rwlock_unlock(&list->mutex);
+
+    return 0;
+}
+
+void
+list_sort(list_t *list, list_cmp_t cmp) {
+    list_node_t *cur, *next;
+    int32_t swapped = 0;
+
+    pthread_rwlock_wrlock(&list->mutex);
+    // TODO:  Make this a quicksort when I have time.  Bubble sort will have to do for now
+    for (int32_t i = 0; i < list->list_size; i++) {
+        swapped = 0;
+        cur = list->head;
+        next = cur->next;
+        while (cur && next) {
+            if (cmp(cur->data, next->data) < 0) {
+                if (next->next)
+                    next->next->prev = cur;
+                else
+                    list->tail = cur;
+                if (cur->prev)
+                    cur->prev->next = next;
+                else
+                    list->head = next;
+                next->prev = cur->prev;
+                cur->next = next->next;
+                next->next = cur;
+                cur->prev = next;
+                swapped = 1;
+            }
+            assert(list->head != NULL);
+            assert(list->tail != NULL);
+            cur = next;
+            next = cur->next;
+        }
+        if (!swapped)
+            break;
+    }
+    pthread_rwlock_unlock(&list->mutex);
 
     return;
 }
