@@ -62,7 +62,7 @@ bst_node_pool_t bst_pool = {
     .lock = PTHREAD_MUTEX_INITIALIZER
 };
 
-int32_t tree_count = 0;
+int32_t top_tree_id = 0;
 char err_str[MAX_ERR_LEN];
 bst_tree_t **tree_ids = NULL;
 list_t *tree_list = NULL;
@@ -72,7 +72,7 @@ static int32_t bst_grow_node_pool();
 
 // Functions
 void
-tree_free_cb(void *node) {
+tree_free_cb(void *node, void *unused) {
     bst_tree_t *tree = (bst_tree_t *)node;
 
     if (tree->name)
@@ -82,21 +82,54 @@ tree_free_cb(void *node) {
 }
 
 int8_t
-build_tree_ids_cb(void *node, void *data) {
-    bst_tree_t *tree = (bst_tree_t *)node;
+tree_sort_by_id_cb(void *n1, void *n2) {
+    bst_tree_t *t1 = (bst_tree_t *)n1;
+    bst_tree_t *t2 = (bst_tree_t *)n2;
 
+    return ((t1->id == t2->id) ? 0 : (t1->id > t2->id) ? -1 : 1);
 }
 
 int8_t
-find_bst_by_name_cb() {
+remove_tree_cb(void *node, void *tree_id) {
+    bst_tree_t *tree = (bst_tree_t *)node;
+    int32_t *id = (int32_t *)tree_id;
+
+    if (tree->id == *id)
+        return LIST_REMOVE;
+
+    return LIST_KEEP;
+}
+
+int8_t
+build_tree_ids_cb(void *node, void *data) {
+    bst_tree_t *tree = (bst_tree_t *)node;
+
+    tree_ids[tree->id] = tree;
+
+    return LIST_CONTINUE;
 }
 
 int32_t
 find_bst_by_name(char *name) {
+    bst_tree_t *t;
+    list_node_t *node;
+    
+    list_read_lock(tree_list);
+    node = tree_list->head;
+    while (node) {
+        t = (bst_tree_t *)node->data;
+        if (!strcmp(t->name, name)) {
+            return t->id;
+        }
+        node = node->next;
+    }
+    list_unlock(tree_list);
+
+    return -1;
 }
 
 static int32_t
-bst_add_tree(char *tree_name, uint8_t idx_count, uint64_t flags) {
+bst_add_tree(char *tree_name, uint64_t flags) {
     bst_tree_t *tree = NULL;
 
     // Create the tree list if necessary
@@ -116,12 +149,28 @@ bst_add_tree(char *tree_name, uint8_t idx_count, uint64_t flags) {
     }
 
     strcpy(tree->name, tree_name);
-    tree->idx_count = idx_count;
+    tree->idx_count = 1;
     tree->flags[0] = flags;
 
-    if (list_size(tree_list) != tree_count) {
-        // There is a hole somewhere.  Find it!
-        //list_for_each(tree_list, find_free_tree_id_cb, &tree->id);
+    // There is a hole somewhere.
+    if (list_size(tree_list) != top_tree_id) {
+        list_read_lock(tree_list);
+        list_node_t *node = tree_list->head;
+        bst_tree_t *t = NULL;
+        int32_t idx = 0;
+
+        tree->id = -1;
+        while (node) {
+            t = (bst_tree_t *)node->data;
+            if (t->id != idx) {
+                tree->id = idx;
+                break;
+            }
+            node = node->next;
+            idx++;
+        }
+        list_unlock(tree_list);
+
         if (tree->id == -1) {
             snprintf(err_str, MAX_ERR_LEN - 1, "Internal error! (1000)",
                     tree_name);
@@ -129,7 +178,7 @@ bst_add_tree(char *tree_name, uint8_t idx_count, uint64_t flags) {
         }
     }
     else {
-        tree->id = tree_count++;
+        tree->id = top_tree_id++;
     }
 
     if (list_append(tree_list, tree) != 0) {
@@ -137,10 +186,17 @@ bst_add_tree(char *tree_name, uint8_t idx_count, uint64_t flags) {
         goto error_return;
     }
 
-    //if ((tree_ids = realloc(tree_ids, sizeof(bst_tree_t **) * tree_count)))
-    //list_for_each(tree_list, build_tree_ids_cb, NULL);
+    // Always sort the list after an insert.  Things are easier if this list remains in order.
+    list_sort(tree_list, tree_sort_by_id_cb);
 
-    return 0;
+    if ((tree_ids = realloc(tree_ids, sizeof(bst_tree_t **) * top_tree_id)) == NULL) {
+        snprintf(err_str, MAX_ERR_LEN - 1, "Cannot allocate memory for new tree name", tree_name);
+        goto error_return;
+    }
+
+    list_for_each(tree_list, build_tree_ids_cb, NULL);
+
+    return tree->id;
 
 error_return:
     if (tree->name)
@@ -152,7 +208,7 @@ error_return:
 }
 
 int32_t
-bst_create(char *tree_name, int32_t idx_count, int64_t flags) {
+bst_create(char *tree_name, int64_t flags) {
     int32_t rc;
 
     if (find_bst_by_name(tree_name) >= 0) {
@@ -161,10 +217,21 @@ bst_create(char *tree_name, int32_t idx_count, int64_t flags) {
     }
 
     pthread_rwlock_wrlock(&reg_lock);
-    rc = bst_add_tree(tree_name, idx_count, flags);
+    rc = bst_add_tree(tree_name, flags);
     pthread_rwlock_unlock(&reg_lock);
 
     return rc;
+}
+
+void 
+bst_destroy(int32_t tree_id, bst_free_t cb, void *cb_data) {
+    // TODO: Walk the tree deleting data
+    
+    // Remove this tree from the list
+    pthread_rwlock_wrlock(&reg_lock);
+    // TODO:  I need a way to properly delete any trees that get removed
+    list_remove_if(tree_list, remove_tree_cb, &tree_id, NULL);
+    pthread_rwlock_unlock(&reg_lock);
 }
 
 int32_t
@@ -175,8 +242,10 @@ bst_init() {
 int32_t
 bst_fini() {
     pthread_mutex_lock(&bst_pool.lock);
-    list_destroy(bst_pool.node_list);
+    list_destroy(bst_pool.node_list, NULL);
     pthread_mutex_unlock(&bst_pool.lock);
+
+    list_destroy(tree_list, NULL);
 
     return 0;
 }

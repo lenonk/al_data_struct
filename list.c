@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <assert.h>
+#include <pthread.h>
 
 #include "al_data_struct.h"
 
@@ -15,7 +16,7 @@ list_get_last_err() {
 }
 
 int32_t
-list_create(list_t **list, free_fn_t free_fn) {
+list_create(list_t **list, list_free_t free_fn) {
 
     if ((*list = calloc(1, sizeof(list_t))) == NULL) {
         snprintf(err_str, MAX_ERR_SZ - 1, "Failed to allocate memory for new list");
@@ -33,7 +34,7 @@ list_create(list_t **list, free_fn_t free_fn) {
 }
 
 void 
-list_destroy(list_t *list) {
+list_destroy(list_t *list, void *fn_data) {
     list_node_t *cur_node;
 
     pthread_rwlock_wrlock(&list->mutex);
@@ -42,12 +43,14 @@ list_destroy(list_t *list) {
         list->head = cur_node->next;
 
         if (list->free_fn)
-            list->free_fn(cur_node->data);
+            list->free_fn(cur_node->data, fn_data);
         else
             free(cur_node->data);
 
         free(cur_node);
     }
+
+    free(list);
     pthread_rwlock_unlock(&list->mutex);
 }
 
@@ -118,7 +121,7 @@ list_for_each(list_t *list, list_iterator_t it, void *data) {
     do {
         rc = it(cur_node->data, data);
         cur_node = cur_node->next;
-    } while (cur_node && rc >= 0);
+    } while (cur_node && rc != LIST_STOP);
     pthread_rwlock_unlock(&list->mutex);
 
     return;
@@ -243,8 +246,6 @@ list_sort(list_t *list, list_cmp_t cmp) {
                 cur->prev = next;
                 swapped = 1;
             }
-            assert(list->head != NULL);
-            assert(list->tail != NULL);
             cur = next;
             next = cur->next;
         }
@@ -254,6 +255,55 @@ list_sort(list_t *list, list_cmp_t cmp) {
     pthread_rwlock_unlock(&list->mutex);
 
     return;
+}
+
+void
+list_remove_if(list_t *list, list_remove_t cmp, void *cmp_data, void *free_data) {
+    list_node_t *cur = list->head;
+
+    if (!list->head)
+        return;
+
+    pthread_rwlock_wrlock(&list->mutex);
+    while (cur) {
+        if (cmp(cur, cmp_data) == LIST_REMOVE) {
+            if (cur == list->head) {
+                list->head = cur->next;
+                if (list->head)
+                    list->head->prev = NULL;
+            } 
+            else {
+                cur->prev->next = cur->next;
+            }
+
+            if (cur == list->tail) {
+                list->tail = cur->prev;
+                if (list->tail)
+                    list->tail->next = NULL;
+            }
+            else {
+                cur->next->prev = cur->prev;
+            }
+            cur->next = cur->prev = NULL;
+
+            list->free_fn(cur->data, free_data);
+            list->list_size--;
+        }
+        cur = cur->next;
+    }
+    pthread_rwlock_unlock(&list->mutex);
+}
+
+void list_read_lock(list_t *list) {
+    pthread_rwlock_rdlock(&list->mutex);
+}
+
+void list_write_lock(list_t *list) {
+    pthread_rwlock_wrlock(&list->mutex);
+}
+
+void list_unlock(list_t *list) {
+    pthread_rwlock_unlock(&list->mutex);
 }
 
 int32_t

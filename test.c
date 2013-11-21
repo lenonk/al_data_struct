@@ -8,8 +8,6 @@
 #define HDR_MAGIC 0xAABBCCDD
 #define FTR_MAGIC 0xDDCCBBAA
 
-#define LIST_SIZE 16
-
 typedef struct {
     int32_t hdr_magic;
     int32_t a;
@@ -20,27 +18,51 @@ typedef struct {
 } test_struct_t;
 
 int8_t
-list_cb(void *node, void *data) {
+list_count_cb(void *node, void *data) {
     test_struct_t *t = (test_struct_t *)node;
+    int32_t *count = (int32_t *)data;
 
     if ((t->hdr_magic != HDR_MAGIC) || t->ftr_magic != FTR_MAGIC) {
-        fprintf(stdout, "TEST 1: Header magic corrupted in list!\n");
-        return -1;
+        fprintf(stdout, "Data Integrity FAILED: Header magic corrupted in list!\n");
+        return LIST_STOP;
     }
     if ((t->hdr_magic != HDR_MAGIC) || t->ftr_magic != FTR_MAGIC) {
-        fprintf(stdout, "TEST 1: Footer magic corrupted in list!\n");
-        return -1;
+        fprintf(stdout, "Data Integrity FAILED: Footer magic corrupted in list!\n");
+        return LIST_STOP;
     }
 
-    fprintf(stdout, "List node: %d\n", t->a);
-    return 0;
+    (*count)++; 
+
+    return LIST_CONTINUE;
+}
+
+int8_t
+list_check_sort_cb(void *node, void *data) {
+    test_struct_t *t = (test_struct_t *)node;
+    int32_t *count = (int32_t *)data;
+    static int32_t last = -1;
+
+    if ((t->hdr_magic != HDR_MAGIC) || t->ftr_magic != FTR_MAGIC) {
+        fprintf(stdout, "Data Integrity FAILED: Header magic corrupted in list!\n");
+        return LIST_STOP;
+    }
+    if ((t->hdr_magic != HDR_MAGIC) || t->ftr_magic != FTR_MAGIC) {
+        fprintf(stdout, "Data Integrity FAILED: Footer magic corrupted in list!\n");
+        return LIST_STOP;
+    }
+
+    if (last > -1 && last > t->a) {
+        (*count)++;
+        return LIST_CONTINUE;
+    }
+
+    return LIST_CONTINUE;
 }
 
 void
-delete_node_cb(void *data) {
+delete_node_cb(void *data, void *unused) {
     test_struct_t *t = (test_struct_t *)data;
 
-    //fprintf(stdout, "Destroying data at node: %d\n", t->a);
     free(t);
 }
 
@@ -52,73 +74,165 @@ sort_cb(void *n1, void *n2) {
     return ((t1->a == t2->a) ? 0 : (t1->a > t2->a) ? -1 : 1);
 }
 
+int32_t
+populate_list(list_t *the_list, int32_t n_elm, int8_t randomize) {
+    test_struct_t *t = NULL;
+    
+    // Populate the list with pointers to test structures
+    for (int32_t i = 0; i < n_elm; i++) {
+        if ((t = calloc(1, sizeof(test_struct_t))) == NULL) {
+            fprintf(stdout, "Error:  Unable to allocate memory for test structures.\n");
+            return -1;
+        }
+        t->hdr_magic = HDR_MAGIC;
+        t->ftr_magic = FTR_MAGIC;
+        if (!randomize)
+            t->a = i;
+        else
+            t->a = i + random();
+        t->b = 256;
+        t->c = 512;
+        t->d = 1024;
+        list_append(the_list, t);
+    }
+}
+
+int32_t
+test_large_list(list_t *the_list) {
+    int32_t count = 0;
+
+    populate_list(the_list, 32768, 0);
+
+    // Verify the size
+    if (list_size(the_list) != 32768) {
+        fprintf(stdout, "List Size: FAILED. Expected 32768, got %d\n", list_size(the_list));
+        return -1;
+    }
+
+    list_for_each(the_list, list_count_cb, &count);
+
+    if (count != 32768) {
+        fprintf(stdout, "List Count: FAILED. Expected 32768, got %d\n", count);
+        return -1;
+    }
+
+    fprintf(stdout, "List Size:\tPASSED\n");
+    fprintf(stdout, "List Count:\tPASSED\n");
+
+    return 0;
+}
+
+int32_t
+test_list_sort(list_t *the_list) {
+    int32_t count = 0;
+
+    populate_list(the_list, 1024, 1);
+    list_sort(the_list, sort_cb);
+    list_for_each(the_list, list_count_cb, &count);
+
+    if (count != 1024) {
+        fprintf(stdout, "List Count (Sort): FAILED. Expected 1024, got %d\n", count);
+        return -1;
+    }
+
+    count = 0;
+    list_for_each(the_list, list_check_sort_cb, &count);
+
+    if (count != 0) {
+        fprintf(stdout, "List Sort: FAILED. %d nodes are out of order\n", count);
+        return -1;
+    }
+    
+    fprintf(stdout, "List Sort:\tPASSED\n");
+
+    return 0;
+}
+
+int8_t
+remove_if(void *node, void *data) {
+    test_struct_t *t = (test_struct_t *)node;
+
+    if (t->a >= 10)
+        return LIST_REMOVE;
+
+    return LIST_KEEP;
+}
+
+int32_t
+test_list_remove_if(list_t *the_list) {
+    test_struct_t *t = NULL;
+
+    populate_list(the_list, 1024, 0);
+
+    list_remove_if(the_list, remove_if, NULL, NULL);
+
+    if (list_size(the_list) != 10) {
+        fprintf(stdout, "List Remove If:\tFAILED. Expected size 10, got %d\n", 
+                list_size(the_list));
+        return -1;
+    }
+
+
+    fprintf(stdout, "List Remove If:\tPASSED\n");
+}
+
+int32_t
+test_list_head_and_tail(list_t *the_list) {
+    populate_list(the_list, 32768, 0);
+    test_struct_t *t = NULL;
+
+    while (list_size(the_list)) {
+        list_head(the_list, (void **)&t, 1);
+        if (t->hdr_magic != HDR_MAGIC) {
+            fprintf(stdout, "List Head FAILED: Header magic corrupted in list!\n");
+            return -1;
+        }
+        if (t->ftr_magic != FTR_MAGIC) {
+            fprintf(stdout, "List Head FAILED: Footer magic corrupted in list!\n");
+            return -1;
+        }
+
+        free(t);
+
+        list_tail(the_list, (void **)&t, 1);
+        if (t->hdr_magic != HDR_MAGIC) {
+            fprintf(stdout, "List Tail FAILED: Header magic corrupted in list!\n");
+            return -1;
+        }
+        if (t->ftr_magic != FTR_MAGIC) {
+            fprintf(stdout, "List Tail FAILED: Footer magic corrupted in list!\n");
+            return -1;
+        }
+        free(t);
+    }
+
+    fprintf(stdout, "List Head:\tPASSED\n");
+    fprintf(stdout, "List Tail:\tPASSED\n");
+    return 0;
+}
+
 int32_t test_list() {
     list_t *the_list = NULL;
-    test_struct_t *t = NULL;
     
     srand(time(NULL));
 
     // Create a new list
     list_create(&the_list, delete_node_cb);
+    test_large_list(the_list);
+    list_destroy(the_list, NULL);
 
-    // Populate the list with pointers to test structures
-    for (int32_t i = 0; i < LIST_SIZE; i++) {
-        if ((t = calloc(1, sizeof(test_struct_t))) == NULL) {
-            fprintf(stdout, "Error:  Unable to allocate memory for test structures.\n");
-            return -1;
-        }
-        t->hdr_magic = HDR_MAGIC;
-        t->ftr_magic = FTR_MAGIC;
-        t->a = i + random();
-        t->b = 256;
-        t->c = 512;
-        t->d = 1024;
-        list_append(the_list, t);
-    }
+    list_create(&the_list, delete_node_cb);
+    test_list_sort(the_list);
+    list_destroy(the_list, NULL);
 
-    // Verify the size
-    if (list_size(the_list) != LIST_SIZE) {
-        fprintf(stdout, "List size is: %d.  Expected 32768\n", list_size(the_list));
-        return -1;
-    }
+    list_create(&the_list, delete_node_cb);
+    test_list_head_and_tail(the_list);
+    list_destroy(the_list, NULL);
 
-    fprintf(stdout, "*****************************************************\n");
-    list_for_each(the_list, list_cb, NULL);
-    list_sort(the_list, sort_cb);
-    fprintf(stdout, "*****************************************************\n");
-    list_for_each(the_list, list_cb, NULL);
-    fprintf(stdout, "*****************************************************\n");
-
-    while (list_size(the_list)) {
-        list_head(the_list, (void **)&t, 1);
-        if ((t->hdr_magic != HDR_MAGIC) || t->ftr_magic != FTR_MAGIC) {
-            fprintf(stdout, "TEST 2: Header magic corrupted in list!\n");
-        }
-        free(t);
-
-        list_tail(the_list, (void **)&t, 1);
-        if ((t->hdr_magic != HDR_MAGIC) || t->ftr_magic != FTR_MAGIC) {
-            fprintf(stdout, "TEST 2: Footer magic corrupted in list!\n");
-        }
-        free(t);
-    }
-
-    // Build the list back up again before destroying it to test the free callback.
-    for (int32_t i = 0; i < 32768; i++) {
-        if ((t = calloc(1, sizeof(test_struct_t))) == NULL) {
-            fprintf(stdout, "Error:  Unable to allocate memory for test structures.\n");
-            return -1;
-        }
-        t->hdr_magic = HDR_MAGIC;
-        t->ftr_magic = FTR_MAGIC;
-        t->a = i;
-        t->b = 256;
-        t->c = 512;
-        t->d = 1024;
-        list_append(the_list, t);
-    }
-
-    list_destroy(the_list);
+    list_create(&the_list, delete_node_cb);
+    test_list_remove_if(the_list);
+    list_destroy(the_list, NULL);
+    fprintf(stdout, "List Destroy:\tPASSED\n");
 
     return 0;
 }
