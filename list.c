@@ -259,14 +259,15 @@ list_sort(list_t *list, list_cmp_t cmp) {
 
 void
 list_remove_if(list_t *list, list_remove_t cmp, void *cmp_data, void *free_data) {
-    list_node_t *cur = list->head;
+    list_node_t *cur = list->head, *next;
 
     if (!list->head)
         return;
 
     pthread_rwlock_wrlock(&list->mutex);
     while (cur) {
-        if (cmp(cur, cmp_data) == LIST_REMOVE) {
+        next = cur->next;
+        if (cmp(cur->data, cmp_data) == LIST_REMOVE) {
             if (cur == list->head) {
                 list->head = cur->next;
                 if (list->head)
@@ -287,9 +288,11 @@ list_remove_if(list_t *list, list_remove_t cmp, void *cmp_data, void *free_data)
             cur->next = cur->prev = NULL;
 
             list->free_fn(cur->data, free_data);
+            free(cur);
             list->list_size--;
         }
-        cur = cur->next;
+        cur = next;
+        //cur = cur->next;
     }
     pthread_rwlock_unlock(&list->mutex);
 }
