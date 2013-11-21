@@ -14,8 +14,13 @@ endif(USE_DEBUG)
 
 SET(al_data_struct_SRCS
    al_hash.c
+   bst.c
+   list.c
 )
 
+SET(test_exe_SRCS
+    test.c
+)
 #include_directories(
 #    ${CMAKE_SOURCE_DIR}/cross-fw 
 #)
@@ -26,6 +31,7 @@ SET(al_data_struct_SRCS
 
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -export-dynamic -avoid-version")
 add_library(al_data_struct SHARED ${al_data_struct_SRCS})
+add_executable(test_lib ${test_exe_SRCS})
 
 #target_link_libraries(al_data_struct #add dependant libraries here)
 ########### install files ###############
