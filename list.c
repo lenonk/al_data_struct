@@ -59,13 +59,13 @@ list_prepend(list_t *list, void *elem) {
 
     if (list->list_size == 0) {
         list->head = list->tail = new_node;
-        return 0;
     }
-
-    new_node->data = elem;
-    new_node->next = list->head;
-    list->head->prev = new_node;
-    list->head = new_node;
+    else {
+        new_node->data = elem;
+        new_node->next = list->head;
+        list->head->prev = new_node;
+        list->head = new_node;
+    }
 
     list->list_size++;
 
@@ -85,12 +85,12 @@ list_append(list_t *list, void *elem) {
 
     if (list->list_size == 0) {
         list->head = list->tail = new_node;
-        return 0;
     }
-
-    list->tail->next = new_node;
-    new_node->prev = list->tail;
-    list->tail = new_node;
+    else {
+        list->tail->next = new_node;
+        new_node->prev = list->tail;
+        list->tail = new_node;
+    }
 
     list->list_size++;
 
@@ -100,14 +100,15 @@ list_append(list_t *list, void *elem) {
 void
 list_for_each(list_t *list, list_iterator_t it, void *data) {
     int8_t rc;
-    list_node_t *node = NULL;
+    list_node_t *cur_node = NULL;
 
-    if (!(it && (node = list->head)))
+    if (!(it && (cur_node = list->head)))
         return;
 
     do {
-        rc = it(node->data, data);
-    } while (node && rc);
+        rc = it(cur_node->data, data);
+        cur_node = cur_node->next;
+    } while (cur_node && rc);
 
     return;
 }
@@ -122,9 +123,15 @@ list_head(list_t *list, void **node, int8_t remove) {
     cur_node = list->head;
 
     if (remove) {
-        list->head = cur_node->next;
-        list->head->prev = NULL;
+        if (list->head == list->tail) {
+            list->head = list->tail = NULL;
+        }
+        else {
+            list->head = cur_node->next;
+            list->head->prev = NULL;
+        }
         cur_node->next = cur_node->prev = NULL;
+        list->list_size--;
     }
 
     *node = cur_node->data;
@@ -142,9 +149,15 @@ list_tail(list_t *list, void **node, int8_t remove) {
     cur_node = list->tail;
 
     if (remove) {
-        list->tail = cur_node->prev;
-        list->tail->next = NULL;
+        if (list->tail == list->head) {
+            list->tail = list->head = NULL;
+        }
+        else {
+            list->tail = cur_node->prev;
+            list->tail->next = NULL;
+        }
         cur_node->next = cur_node->prev = NULL;
+        list->list_size--;
     }
 
     *node = cur_node->data;
