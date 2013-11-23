@@ -216,6 +216,7 @@ int32_t test_list() {
     
     srand(time(NULL));
 
+    fprintf(stdout, "********** LIST TESTS **********\n");
     // Create a new list
     list_create(&the_list, delete_node_cb);
     test_large_list(the_list);
@@ -234,6 +235,31 @@ int32_t test_list() {
     list_destroy(the_list, NULL);
     fprintf(stdout, "List Destroy:\tPASSED\n");
 
+    fprintf(stdout, "\n********** BST TESTS **********\n");
+    int32_t tree_hdl;
+    test_struct_t *t = NULL;
+
+    bst_init();
+    tree_hdl = bst_create("The Tree", delete_node_cb, BST_KINT32);
+    for (uint32_t i = 0; i < 6; i++) {
+        if ((t = calloc(1, sizeof(test_struct_t))) == NULL) {
+            fprintf(stdout, "Error:  Unable to allocate memory for test structures.\n");
+            return -1;
+        }
+        t->hdr_magic = HDR_MAGIC;
+        t->ftr_magic = FTR_MAGIC;
+        if (i < 5)
+            t->a = (i + 1) * 10;
+        else
+            t->a = 25;
+        t->b = 256;
+        t->c = 512;
+        t->d = 1024;
+
+        bst_insert(tree_hdl, 0, &t->a, t);
+    }
+
+    bst_print_tree(tree_hdl, 0);
     return 0;
 }
 

@@ -192,28 +192,27 @@ list_tail(list_t *list, void **node, int8_t remove) {
 }
 
 int32_t
-list_next(list_t *list, void **node) {
-    static list_node_t *cur_node = NULL;
+list_next(list_t *list, void *from, void **node) {
+    list_node_t *from_node = (list_node_t *)from;
 
-    if (!list_head) {
+    if (!list && !from_node) {
         *node = NULL;
         return -1;
     }
 
     pthread_rwlock_rdlock(&list->mutex);
     if (list != NULL) {
-        cur_node = list->head;
+        if (!list->head || !list->head->data)
+            *node = NULL;
+        else
+            *node = list->head->data;
     }
     else {
-        cur_node = cur_node->next;
+        if (!from_node->next || !from_node->next->data)
+            *node = NULL;
+        else
+            *node = from_node->next->data;
     }
-
-    if (!cur_node) {
-        *node = NULL;
-        return 0;
-    }
-
-    *node = cur_node->data;
     pthread_rwlock_unlock(&list->mutex);
 
     return 0;
