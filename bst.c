@@ -20,7 +20,6 @@ const int64_t BST_KEYS = BST_KPSTR | BST_KINT8 | BST_KINT16 | BST_KINT32 | BST_K
 #define BST_LEFT_GT 1
 #define BST_NOTFOUND -2
 
-#define max(x, y) (x > y) ? x : y
 
 typedef union {
     char *pstr;
@@ -71,6 +70,7 @@ static void bst_key_cpy(bst_key_t *dst, bst_key_t *src, int64_t flags);
 static int64_t bst_get_height(bst_node_t *node);
 static bst_node_t * bst_right_rotate(bst_node_t *y);
 static bst_node_t * bst_left_rotate(bst_node_t *x);
+static int64_t max(int64_t x, int64_t y);
 
 // Callbacks
 void
@@ -566,6 +566,11 @@ bst_print_tree_recurse(bst_node_t *node) {
         bst_print_tree_recurse(node->left);
         bst_print_tree_recurse(node->right);
     }
+}
+
+inline static int64_t
+max(int64_t x, int64_t y) {
+    return ((x > y) ? x : y);
 }
 
 void
