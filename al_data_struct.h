@@ -2,6 +2,8 @@
 #define __AL_DATA_STRUCT_H__
 
 #include <pthread.h>
+#include <sys/time.h>
+#include <stdint.h>
 
 // ****************************************************
 // *                    Hash table                    *
@@ -97,19 +99,55 @@ char *list_get_last_err();
 #define BST_KINT128  (1 << 9)
 #define BST_KTME     (1 << 10)
 
+#define BST_MAX_IDX 16
+
 // This callback will be called on each node by bst_destroy.  Free any memory that you have
 // allocated here.  If this param is NULL when bst_create is called, bst destroy will call
 // free on your data stucture for you as a courtesy.
 typedef void (*bst_free_t)(void *, void*);
 
+typedef union {
+    char *pstr;
+    int8_t i8;
+    int16_t i16;
+    int32_t i32;
+    int64_t i64;
+    uint8_t u8;
+    uint16_t u16;
+    uint32_t u32;
+    uint64_t u64;
+    __int128_t i128;
+    struct timeval tv;
+} bst_key_t;
+
+typedef struct bst_node_s {
+    struct bst_node_s *left;
+    struct bst_node_s *right;
+    struct bst_node_s *parent;
+    int64_t height;
+    bst_key_t key;
+    void *data;
+} bst_node_t;
+
+typedef struct {
+    uint8_t idx_count;
+    int32_t id;
+    uint64_t flags[BST_MAX_IDX];
+    char *name;
+    bst_node_t *root[BST_MAX_IDX];
+    bst_free_t free_fn;
+    pthread_rwlock_t mutex[BST_MAX_IDX];
+} bst_tree_t;
+
 int32_t bst_init();
 int32_t bst_fini();
 int32_t find_bst_by_name(char *name);
-int32_t bst_create(char *tree_name, bst_free_t free_fn, int64_t flags);
-int32_t bst_insert(int32_t tree_id, int32_t idx, void *key, void *data);
-int32_t bst_get(int32_t tree_id, int32_t idx, void **node, void *key);
-void bst_destroy(int32_t tree_id, bst_free_t cb, void *fn_data);
-void bst_print_tree(int32_t tree_id, int32_t idx);
+int32_t bst_insert(bst_tree_t *tree, int32_t idx, void *key, void *data);
+bst_tree_t *bst_create(char *tree_name, bst_free_t free_fn, int64_t flags);
+void *bst_fetch(bst_tree_t *tree, int32_t idx, void *key, int32_t *result);
+void *bst_delete(bst_tree_t *tree, int32_t idx, void *key); 
+void bst_destroy(bst_tree_t *tree, void *fn_data);
+void bst_print_tree(bst_tree_t *tree, int32_t idx);
 char *bst_get_last_err();
 
 #endif

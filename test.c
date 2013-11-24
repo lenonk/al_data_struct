@@ -1,21 +1,23 @@
 #include <stdio.h>
-#include <stdint.h>
 #include <stdlib.h>
-#include <time.h>
 
 #include "al_data_struct.h"
+#include "rDB.h"
 
 #define HDR_MAGIC 0xAABBCCDD
 #define FTR_MAGIC 0xDDCCBBAA
 
 typedef struct {
-    int32_t hdr_magic;
+    bpp_t pp;
     int32_t a;
+    int32_t hdr_magic;
     int32_t b;
     int32_t c;
     int32_t d;
     int32_t ftr_magic;
 } test_struct_t;
+
+test_struct_t *tarr[10000000];
 
 int8_t
 list_count_cb(void *node, void *data) {
@@ -90,10 +92,34 @@ populate_list(list_t *the_list, int32_t n_elm, int8_t randomize) {
             t->a = i;
         else
             t->a = i + random();
-        t->b = 256;
-        t->c = 512;
-        t->d = 1024;
-        list_append(the_list, t);
+         t->b = 256;
+         t->c = 512;
+         t->d = 1024;
+         list_append(the_list, t);
+    }
+}
+
+int32_t
+populate_array(int32_t n_elm, int8_t randomize) {
+    test_struct_t *t = NULL;
+    
+    // Populate the list with pointers to test structures
+    for (int32_t i = 0; i < n_elm; i++) {
+        if ((t = calloc(1, sizeof(test_struct_t))) == NULL) {
+            fprintf(stdout, "Error:  Unable to allocate memory for test structures.\n");
+            return -1;
+        }
+        t->hdr_magic = HDR_MAGIC;
+        t->ftr_magic = FTR_MAGIC;
+        if (!randomize)
+            t->a = i;
+        else
+            t->a = i + random();
+         t->b = 256;
+         t->c = 512;
+         t->d = 1024;
+
+         tarr[i] = t;
     }
 }
 
@@ -235,32 +261,101 @@ int32_t test_list() {
     list_destroy(the_list, NULL);
     fprintf(stdout, "List Destroy:\tPASSED\n");
 
-    fprintf(stdout, "\n********** BST TESTS **********\n");
-    int32_t tree_hdl;
+    return 0;
+}
+
+int32_t
+test_bst() {
     test_struct_t *t = NULL;
 
+    fprintf(stdout, "\n********** BST TESTS **********\n");
+    bst_tree_t *tree;
+    struct timeval now, later, diff;
+    int32_t rc;
+
     bst_init();
-    tree_hdl = bst_create("The Tree", delete_node_cb, BST_KINT32);
-    for (uint32_t i = 0; i < 6; i++) {
-        if ((t = calloc(1, sizeof(test_struct_t))) == NULL) {
-            fprintf(stdout, "Error:  Unable to allocate memory for test structures.\n");
-            return -1;
-        }
-        t->hdr_magic = HDR_MAGIC;
-        t->ftr_magic = FTR_MAGIC;
-        if (i < 5)
-            t->a = (i + 1) * 10;
-        else
-            t->a = 25;
-        t->b = 256;
-        t->c = 512;
-        t->d = 1024;
 
-        bst_insert(tree_hdl, 0, &t->a, t);
+    populate_array(6, 0);
+    tree = bst_create("The Tree", delete_node_cb, BST_KINT32);
+    tarr[0]->a = 10;
+    bst_insert(tree, 0, &tarr[0]->a, t);
+    tarr[1]->a = 20;
+    bst_insert(tree, 0, &tarr[1]->a, t);
+    tarr[2]->a = 30;
+    bst_insert(tree, 0, &tarr[2]->a, t);
+    tarr[3]->a = 40;
+    bst_insert(tree, 0, &tarr[3]->a, t);
+    tarr[4]->a = 50;
+    bst_insert(tree, 0, &tarr[4]->a, t);
+    tarr[5]->a = 25;
+    bst_insert(tree, 0, &tarr[5]->a, t);
+    bst_print_tree(tree, 0);
+    bst_destroy(tree, NULL);
+
+    populate_array(500000, 0);
+    tree = bst_create("The Tree", delete_node_cb, BST_KINT32);
+    gettimeofday(&now, NULL);
+    for (uint32_t i = 0; i < 500000; i++) {
+        bst_insert(tree, 0, &tarr[i]->a, tarr[i]);
     }
+    gettimeofday(&later, NULL);
 
-    bst_print_tree(tree_hdl, 0);
-    return 0;
+    timersub(&later, &now, &diff);
+    fprintf(stdout, "500k records inserted in: %ld seconds, %ld microseconds\n",
+            diff.tv_sec, diff.tv_usec);
+
+    gettimeofday(&now, NULL);
+    for (int32_t i = 499999; i >= 0; i--) { 
+        t = bst_fetch(tree, 0, &i, &rc);
+    }
+    gettimeofday(&later, NULL);
+    timersub(&later, &now, &diff);
+    fprintf(stdout, "Time to find 500k nodes: %ld seconds, %ld microseconds\n", 
+            diff.tv_sec, diff.tv_usec);
+
+    gettimeofday(&now, NULL);
+    bst_destroy(tree, NULL);
+    gettimeofday(&later, NULL);
+    timersub(&later, &now, &diff);
+    fprintf(stdout, "Time to destroy tree: %ld seconds, %ld microseconds\n", 
+            diff.tv_sec, diff.tv_usec);
+
+
+    populate_array(500000, 0);
+    fprintf(stdout, "\n********** RDB TESTS **********\n");
+    int32_t rdb_hdl;
+    int32_t tree_hdl;
+    t = NULL;
+
+    rdbInit();
+
+    rdb_hdl = rdbRegisterPool("The Tree", 1, 0, RDB_KINT32 | RDB_KASC | RDB_BTREE);
+
+    gettimeofday(&now, NULL);
+    for (uint32_t i = 0; i < 500000; i++) {
+        rdbInsert(rdb_hdl, tarr[i]);
+    }
+    gettimeofday(&later, NULL);
+
+    timersub(&later, &now, &diff);
+    fprintf(stdout, "500k records inserted in: %ld seconds, %ld microseconds\n",
+            diff.tv_sec, diff.tv_usec);
+
+    gettimeofday(&now, NULL);
+    for (int32_t i = 499999; i >= 0; i--) { 
+        t = rdbGet(tree_hdl, 0, &i);
+    }
+    gettimeofday(&later, NULL);
+    timersub(&later, &now, &diff);
+    fprintf(stdout, "Time to find 500k nodes: %ld seconds, %ld microseconds\n", 
+            diff.tv_sec, diff.tv_usec);
+
+    gettimeofday(&now, NULL);
+    rdbFlush(tree_hdl, NULL, NULL);
+    gettimeofday(&later, NULL);
+    timersub(&later, &now, &diff);
+    fprintf(stdout, "Time to destroy tree: %ld seconds, %ld microseconds\n", 
+            diff.tv_sec, diff.tv_usec);
 }
 
 int32_t
@@ -269,5 +364,6 @@ main(int32_t argc, char **argv) {
     if (test_list() < 0)
         return -1;
 
+    test_bst();
     return 0;
 }
