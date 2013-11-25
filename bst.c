@@ -18,21 +18,28 @@ const int64_t BST_KEYS = BST_KPSTR | BST_KINT8 | BST_KINT16 | BST_KINT32 | BST_K
 #define BST_EQUAL 0
 #define BST_RIGHT_GT -1
 #define BST_LEFT_GT 1
-#define BST_NOTFOUND -2
 
-#define bst_get_height(x) (x ? x->height : 0)
+#define likely(x) __builtin_expect(!!(x), 1)
+#define unlikely(x) __builtin_expect(!!(x), 0)
+
+#define bst_get_height(x) (likely(x != NULL) ? x->height : 0)
+
+#define bst_get_node(node) do {                         \
+    if (unlikely(list_size(bst_node_list) <= 0))        \
+       bst_grow_node_pool();                            \
+    list_head(bst_node_list, (void **)(&node), 1);      \
+} while (0)
 
 // Globals
 list_t *bst_node_list = NULL;
-
 int32_t top_tree_id = 0;
 char err_str[MAX_ERR_LEN];
 list_t *tree_list = NULL;
 
 static int32_t bst_grow_node_pool();
-static bst_node_t *bst_get_node();
 static int32_t bst_key_cmp(bst_key_t *left, bst_key_t *right, int64_t flags);
 static void bst_key_cpy(bst_key_t *dst, bst_key_t *src, int64_t flags);
+static void bst_delete_data(bst_tree_t *tree, bst_node_t *node, void *fn_data);
 static bst_node_t * bst_right_rotate(bst_node_t *y);
 static bst_node_t * bst_left_rotate(bst_node_t *x);
 
@@ -60,7 +67,7 @@ remove_tree_cb(void *node, void *tree_id) {
     bst_tree_t *tree = (bst_tree_t *)node;
     int32_t *id = (int32_t *)tree_id;
 
-    if (tree->id == *id)
+    if (unlikely(tree->id == *id))
         return LIST_REMOVE;
 
     return LIST_KEEP;
@@ -173,89 +180,27 @@ bst_create(char *tree_name, bst_free_t free_fn, int64_t flags) {
     return bst_add_tree(tree_name, free_fn, flags);
 }
 
-static void *
-bst_fetch_r(bst_node_t *node, void *key, int64_t flags, int32_t *result) {
-    int32_t rc; 
-
-    rc = bst_key_cmp(&node->key, key, flags);
-    switch (rc) {
-        case BST_RIGHT_GT:
-            if (node->right != NULL)
-                return bst_fetch_r(node->right, key, flags, result);
-            else  {
-                *result = rc;
-                return NULL;
-            }
-        case BST_LEFT_GT:
-            if (node->left != NULL)
-                return bst_fetch_r(node->left, key, flags, result);
-            else {
-                *result = rc;
-                return NULL; 
-            }
-        case BST_EQUAL:
-            *result = rc;
-            return node;
-    }
-
-    return NULL;
-}
-
 void *
 bst_fetch(bst_tree_t *tree, int32_t idx, void *key, int32_t *result) {
     bst_node_t *node;
 
-    if (tree->root[idx] == NULL)
-        return NULL;
-
     pthread_rwlock_rdlock(&tree->mutex[idx]);
-    node = bst_fetch_r(tree->root[idx], key, tree->flags[idx], result);
+    node = tree->root[idx];
+    *result = BST_RIGHT_GT;
+    while (node && *result != BST_EQUAL) {
+        *result = bst_key_cmp(&node->key, key, tree->flags[idx]);
+        switch (*result) {
+            case BST_RIGHT_GT:
+                node = node->right;
+                break;
+            case BST_LEFT_GT:
+                node = node->left;
+                break;
+        }
+    }
     pthread_rwlock_unlock(&tree->mutex[idx]);
 
-    return node->data;
-//     bst_node_t *cur_node = NULL;
-//     void *ret_data = NULL;
-//     int8_t stop = 0, rc;
-// 
-//     pthread_rwlock_rdlock(&tree->mutex[idx]);
-//     if (tree->root[idx] == NULL) {
-//         *result = BST_NOTFOUND;
-//         return NULL;
-//     }
-//     
-//     cur_node = tree->root[idx];
-//     do {
-//         rc = bst_key_cmp(&cur_node->key, key, tree->flags[idx]);
-//         switch (rc) {
-//             case BST_EQUAL:
-//                 ret_data = cur_node->data;
-//                 stop = 1;
-//                 break;
-//             case BST_RIGHT_GT:
-//                 if (cur_node->right != NULL) {
-//                     cur_node = cur_node->right;
-//                 }
-//                 else {
-//                     ret_data = NULL;
-//                     stop = 1;
-//                 }
-//                 break;
-//             case BST_LEFT_GT:
-//                 if (cur_node->left != NULL) {
-//                     cur_node = cur_node->left;
-//                 }
-//                 else {
-//                     ret_data = NULL;
-//                     stop = 1;
-//                 }
-//                 break;
-//         }
-//        
-//     } while (!stop);
-//     pthread_rwlock_unlock(&tree->mutex[idx]);
-// 
-//     *result = rc;
-//     return ret_data;
+    return (node ? node->data : NULL);
 }
 
 static bst_node_t *
@@ -265,13 +210,10 @@ bst_insert_r(bst_node_t *node, void *key, void *data, int64_t flags) {
     int64_t lh, rh;
     int8_t balance_factor;
 
-    if (!node) {
-        new_node = bst_get_node(); 
-        if (new_node) {
+    if (unlikely(!node)) {
+        bst_get_node(new_node); 
+        if (likely(new_node)) {
             bst_key_cpy(&new_node->key, key, flags);
-            new_node->height = 1;
-            new_node->left = NULL;
-            new_node->right = NULL;
             new_node->data = data;
         }
         return new_node;
@@ -279,14 +221,12 @@ bst_insert_r(bst_node_t *node, void *key, void *data, int64_t flags) {
 
     rc = bst_key_cmp(&node->key, key, flags);
     if (rc == BST_LEFT_GT) {
-        if ((new_node = bst_insert_r(node->left, key, data, flags)) == NULL)
-            return NULL;
-        node->left = new_node;
+         if (!(node->left = bst_insert_r(node->left, key, data, flags)))
+             return NULL;
     }
     else if (rc == BST_RIGHT_GT) {
-        if ((new_node= bst_insert_r(node->right, key, data, flags)) == NULL)
-            return NULL;
-        node->right = new_node;
+         if (!(node->right = bst_insert_r(node->right, key, data, flags)))
+             return NULL;
     }
     else {
         // TODO:  Handle duplicate key
@@ -331,7 +271,7 @@ int32_t
 bst_insert(bst_tree_t *tree, int32_t idx, void *key, void *data) {
     bst_node_t *new_node;
 
-    pthread_rwlock_wrlock(&tree->mutex[idx]);
+     pthread_rwlock_wrlock(&tree->mutex[idx]);
     if ((new_node = bst_insert_r(tree->root[idx], key, data, tree->flags[idx])) == NULL) {
         snprintf(err_str, MAX_ERR_LEN - 1, "Unable to insert new node.  Out of memory?");
         return -1;
@@ -343,21 +283,11 @@ bst_insert(bst_tree_t *tree, int32_t idx, void *key, void *data) {
     return 0;
 }
 
-static void
-bst_delete_data(bst_tree_t *tree, bst_node_t *node, void *fn_data) {
-    if (node != NULL) {
-        bst_delete_data(tree, node->left, fn_data);
-        bst_delete_data(tree, node->right, fn_data);
-        if (tree->free_fn)
-            tree->free_fn(node, fn_data);
-        else
-            free(node->data);
-    }
-}
-
 void 
 bst_destroy(bst_tree_t *tree, void *fn_data) {
+    pthread_rwlock_wrlock(&tree->mutex[0]);
     bst_delete_data(tree, tree->root[0], fn_data);
+    pthread_rwlock_unlock(&tree->mutex[0]);
     // Remove this tree from the list
     list_remove_if(tree_list, remove_tree_cb, &tree->id, NULL);
 }
@@ -375,17 +305,16 @@ bst_fini() {
     return 0;
 }
 
-static bst_node_t *
-bst_get_node() {
-    bst_node_t *node = NULL;
-
-    list_head(bst_node_list, (void **)(&node), 1);
-    if (!node) {
-        bst_grow_node_pool();
-        list_head(bst_node_list, (void **)(&node), 1);
+static void
+bst_delete_data(bst_tree_t *tree, bst_node_t *node, void *fn_data) {
+    if (node != NULL) {
+        bst_delete_data(tree, node->left, fn_data);
+        bst_delete_data(tree, node->right, fn_data);
+        if (tree->free_fn)
+            tree->free_fn(node, fn_data);
+        else
+            free(node->data);
     }
-
-    return node;
 }
 
 static int32_t
@@ -401,6 +330,7 @@ bst_grow_node_pool() {
             return -1;
         }
         list_append(bst_node_list, node); 
+        node->height = 1;
     }
 
     return 0;
@@ -421,7 +351,7 @@ bst_key_cmp(bst_key_t *left, bst_key_t *right, int64_t flags) {
             return (left->i32 == right->i32) ? BST_EQUAL : (left->i32 < right->i32) ? 
                 BST_RIGHT_GT : BST_LEFT_GT;
         case BST_KINT64:
-            return (left->i32 == right->i32) ? BST_EQUAL : (left->i32 < right->i32) ? 
+            return (left->i64 == right->i64) ? BST_EQUAL : (left->i64 < right->i64) ? 
                 BST_RIGHT_GT : BST_LEFT_GT;
         case BST_KUINT8:
             return (left->u8 == right->u8) ? BST_EQUAL : (left->u8 < right->u8) ? 

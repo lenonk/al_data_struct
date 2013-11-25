@@ -275,23 +275,6 @@ test_bst() {
 
     bst_init();
 
-    populate_array(6, 0);
-    tree = bst_create("The Tree", delete_node_cb, BST_KINT32);
-    tarr[0]->a = 10;
-    bst_insert(tree, 0, &tarr[0]->a, t);
-    tarr[1]->a = 20;
-    bst_insert(tree, 0, &tarr[1]->a, t);
-    tarr[2]->a = 30;
-    bst_insert(tree, 0, &tarr[2]->a, t);
-    tarr[3]->a = 40;
-    bst_insert(tree, 0, &tarr[3]->a, t);
-    tarr[4]->a = 50;
-    bst_insert(tree, 0, &tarr[4]->a, t);
-    tarr[5]->a = 25;
-    bst_insert(tree, 0, &tarr[5]->a, t);
-    bst_print_tree(tree, 0);
-    bst_destroy(tree, NULL);
-
     populate_array(500000, 0);
     tree = bst_create("The Tree", delete_node_cb, BST_KINT32);
     gettimeofday(&now, NULL);

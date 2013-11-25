@@ -120,10 +120,12 @@ typedef union {
     struct timeval tv;
 } bst_key_t;
 
+typedef void (*bst_key_cpy_t)(bst_key_t *, bst_key_t *);
+typedef int32_t (*bst_key_cmp_t)(bst_key_t *, bst_key_t *);
+
 typedef struct bst_node_s {
     struct bst_node_s *left;
     struct bst_node_s *right;
-    struct bst_node_s *parent;
     int64_t height;
     bst_key_t key;
     void *data;
@@ -136,6 +138,8 @@ typedef struct {
     char *name;
     bst_node_t *root[BST_MAX_IDX];
     bst_free_t free_fn;
+    bst_key_cpy_t key_cpy_fn;
+    bst_key_cmp_t key_cmp_fn;
     pthread_rwlock_t mutex[BST_MAX_IDX];
 } bst_tree_t;
 
