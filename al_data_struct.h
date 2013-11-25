@@ -37,6 +37,8 @@ void *ht_get(hash_table_t *ht, char *key);
 #define LIST_KEEP 0
 #define LIST_REMOVE 1
 
+#define list_size(list) (list->list_size)
+
 // This callback will be called on each node by list_destroy.  Free any memory that you have
 // allocated here.  If this param is NULL when list_create is called, list destroy will call
 // free on your data stucture for you as a courtesy.
@@ -70,9 +72,10 @@ typedef struct {
 int32_t list_create(list_t **list, list_free_t free_fn);
 int32_t list_prepend(list_t *list, void *elem);
 int32_t list_append(list_t *list, void *elem);
-int32_t list_size(list_t *list);
-int32_t list_head(list_t *list, void **node, int8_t remove);
-int32_t list_tail(list_t *list, void **node, int8_t remove);
+int32_t list_head(list_t *list, void **node);
+int32_t list_pop_head(list_t *list, void **node);
+int32_t list_tail(list_t *list, void **node);
+int32_t list_pop_tail(list_t *list, void **node);
 int32_t list_next(list_t *list, void *from, void **node);
 void list_remove_if(list_t *list, list_remove_t cmp, void *cmp_data, void *free_data);
 void list_sort(list_t *list, list_cmp_t cmp);
@@ -101,42 +104,23 @@ char *list_get_last_err();
 
 #define BST_MAX_IDX 16
 
+
+struct bst_node_s;
+union bst_key_u;
+
 // This callback will be called on each node by bst_destroy.  Free any memory that you have
 // allocated here.  If this param is NULL when bst_create is called, bst destroy will call
 // free on your data stucture for you as a courtesy.
 typedef void (*bst_free_t)(void *, void*);
-
-typedef union {
-    char *pstr;
-    int8_t i8;
-    int16_t i16;
-    int32_t i32;
-    int64_t i64;
-    uint8_t u8;
-    uint16_t u16;
-    uint32_t u32;
-    uint64_t u64;
-    __int128_t i128;
-    struct timeval tv;
-} bst_key_t;
-
-typedef void (*bst_key_cpy_t)(bst_key_t *, bst_key_t *);
-typedef int32_t (*bst_key_cmp_t)(bst_key_t *, bst_key_t *);
-
-typedef struct bst_node_s {
-    struct bst_node_s *left;
-    struct bst_node_s *right;
-    int64_t height;
-    bst_key_t key;
-    void *data;
-} bst_node_t;
+typedef void (*bst_key_cpy_t)(union bst_key_u *, union bst_key_u *);
+typedef int32_t (*bst_key_cmp_t)(union bst_key_u *, union bst_key_u *);
 
 typedef struct {
     uint8_t idx_count;
     int32_t id;
     uint64_t flags[BST_MAX_IDX];
     char *name;
-    bst_node_t *root[BST_MAX_IDX];
+    struct bst_node_s *root[BST_MAX_IDX];
     bst_free_t free_fn;
     bst_key_cpy_t key_cpy_fn;
     bst_key_cmp_t key_cmp_fn;
@@ -148,10 +132,10 @@ int32_t bst_fini();
 int32_t find_bst_by_name(char *name);
 int32_t bst_insert(bst_tree_t *tree, int32_t idx, void *key, void *data);
 bst_tree_t *bst_create(char *tree_name, bst_free_t free_fn, int64_t flags);
-void *bst_fetch(bst_tree_t *tree, int32_t idx, void *key, int32_t *result);
+void *bst_fetch(bst_tree_t *tree, int32_t idx, void *key);
 void *bst_delete(bst_tree_t *tree, int32_t idx, void *key); 
 void bst_destroy(bst_tree_t *tree, void *fn_data);
-void bst_print_tree(bst_tree_t *tree, int32_t idx);
+void bst_print_tree(bst_tree_t *tree, int32_t idx, int32_t compact);
 char *bst_get_last_err();
 
 #endif

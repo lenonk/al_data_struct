@@ -208,7 +208,7 @@ test_list_head_and_tail(list_t *the_list) {
     test_struct_t *t = NULL;
 
     while (list_size(the_list)) {
-        list_head(the_list, (void **)&t, 1);
+        list_pop_head(the_list, (void **)&t);
         if (t->hdr_magic != HDR_MAGIC) {
             fprintf(stdout, "List Head FAILED: Header magic corrupted in list!\n");
             return -1;
@@ -220,7 +220,7 @@ test_list_head_and_tail(list_t *the_list) {
 
         free(t);
 
-        list_tail(the_list, (void **)&t, 1);
+        list_pop_tail(the_list, (void **)&t);
         if (t->hdr_magic != HDR_MAGIC) {
             fprintf(stdout, "List Tail FAILED: Header magic corrupted in list!\n");
             return -1;
@@ -232,8 +232,8 @@ test_list_head_and_tail(list_t *the_list) {
         free(t);
     }
 
-    fprintf(stdout, "List Head:\tPASSED\n");
-    fprintf(stdout, "List Tail:\tPASSED\n");
+    fprintf(stdout, "List Pop Head:\tPASSED\n");
+    fprintf(stdout, "List Pop Tail:\tPASSED\n");
     return 0;
 }
 
@@ -275,6 +275,24 @@ test_bst() {
 
     bst_init();
 
+    populate_array(100, 0);
+    fprintf(stdout, "*********************************** 200 element tree visualized:\n");
+    tree = bst_create("The Tree", delete_node_cb, BST_KINT32);
+    for (uint32_t i = 0; i < 100; i++) {
+        bst_insert(tree, 0, &tarr[i]->a, tarr[i]);
+    }
+    bst_print_tree(tree, 0, 1);
+    bst_destroy(tree, NULL);
+
+    populate_array(20, 0);
+    fprintf(stdout, "\n*********************************** 20 element tree visualized:\n");
+    tree = bst_create("The Tree", delete_node_cb, BST_KINT32);
+    for (uint32_t i = 0; i < 20; i++) {
+        bst_insert(tree, 0, &tarr[i]->a, tarr[i]);
+    }
+    bst_print_tree(tree, 0, 0);
+    bst_destroy(tree, NULL);
+
     populate_array(500000, 0);
     tree = bst_create("The Tree", delete_node_cb, BST_KINT32);
     gettimeofday(&now, NULL);
@@ -284,12 +302,12 @@ test_bst() {
     gettimeofday(&later, NULL);
 
     timersub(&later, &now, &diff);
-    fprintf(stdout, "500k records inserted in: %ld seconds, %ld microseconds\n",
+    fprintf(stdout, "\n500k records inserted in: %ld seconds, %ld microseconds\n",
             diff.tv_sec, diff.tv_usec);
 
     gettimeofday(&now, NULL);
     for (int32_t i = 499999; i >= 0; i--) { 
-        t = bst_fetch(tree, 0, &i, &rc);
+        t = bst_fetch(tree, 0, &i);
     }
     gettimeofday(&later, NULL);
     timersub(&later, &now, &diff);

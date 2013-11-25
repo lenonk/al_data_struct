@@ -128,65 +128,81 @@ list_for_each(list_t *list, list_iterator_t it, void *data) {
 }
 
 int32_t
-list_head(list_t *list, void **node, int8_t remove) {
-    list_node_t *cur_node = NULL;
+list_pop_head(list_t *list, void **node) {
+    list_node_t *cur_node;
 
-    if (!list->head) {
-        *node = NULL;
-        return -1;
-    }
-
-    pthread_rwlock_rdlock(&list->mutex);
+    pthread_rwlock_wrlock(&list->mutex);
     cur_node = list->head;
+    
+    if (!cur_node)
+        return -1;
 
-    if (remove) {
-        pthread_rwlock_unlock(&list->mutex);
-        pthread_rwlock_wrlock(&list->mutex);
-        if (list->head == list->tail) {
-            list->head = list->tail = NULL;
-        }
-        else {
-            list->head = cur_node->next;
-            list->head->prev = NULL;
-        }
-        cur_node->next = cur_node->prev = NULL;
-        list->list_size--;
+    if (list->head != list->tail) {
+        list->head = cur_node->next;
+        list->head->prev = NULL;
+    }
+    else {
+        list->head = list->tail = NULL;
     }
 
-    *node = cur_node->data;
-    pthread_rwlock_unlock(&list->mutex);
+    list->list_size--;
+
+    (cur_node) ? (*node = cur_node->data) : (*node = NULL);
+
+    //free(cur_node);
 
     return 0;
 }
 
 int32_t
-list_tail(list_t *list, void **node, int8_t remove) {
-    list_node_t *cur_node = NULL;
+list_pop_tail(list_t *list, void **node) {
+    list_node_t *cur_node;
 
-    if (!list->tail) {
-        *node = NULL;
+    pthread_rwlock_wrlock(&list->mutex);
+    cur_node = list->tail;
+    
+    if (!cur_node)
         return -1;
+
+    if (list->tail != list->head) {
+        list->tail = cur_node->prev;
+        list->tail->next = NULL;
     }
+    else {
+        list->head = list->tail = NULL;
+    }
+
+    list->list_size--;
+
+    (cur_node) ? (*node = cur_node->data) : (*node = NULL);
+
+    //free(cur_node);
+
+    return 0;
+}
+
+int32_t
+list_head(list_t *list, void **node) {
+    list_node_t *cur_node;
+ 
+    pthread_rwlock_rdlock(&list->mutex);
+    cur_node = list->head;
+    pthread_rwlock_unlock(&list->mutex);
+
+    (cur_node) ? (*node = cur_node->data) : (*node = NULL);
+
+    return 0;
+}
+
+int32_t
+list_tail(list_t *list, void **node) {
+    list_node_t *cur_node;
 
     pthread_rwlock_rdlock(&list->mutex);
     cur_node = list->tail;
-
-    if (remove) {
-        pthread_rwlock_unlock(&list->mutex);
-        pthread_rwlock_wrlock(&list->mutex);
-        if (list->tail == list->head) {
-            list->tail = list->head = NULL;
-        }
-        else {
-            list->tail = cur_node->prev;
-            list->tail->next = NULL;
-        }
-        cur_node->next = cur_node->prev = NULL;
-        list->list_size--;
-    }
-
-    *node = cur_node->data;
     pthread_rwlock_unlock(&list->mutex);
+
+    (cur_node) ? (*node = cur_node->data) : (*node = NULL);
 
     return 0;
 }
@@ -308,7 +324,3 @@ void list_unlock(list_t *list) {
     pthread_rwlock_unlock(&list->mutex);
 }
 
-int32_t
-list_size(list_t *list) {
-    return list->list_size;
-}

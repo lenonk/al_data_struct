@@ -9,7 +9,7 @@
 #include "al_data_struct.h"
 
 // Defines
-#define BST_NODE_POOL_SZ 1024000
+#define BST_NODE_POOL_SZ 512000
 #define MAX_ERR_LEN 2048
 
 const int64_t BST_KEYS = BST_KPSTR | BST_KINT8 | BST_KINT16 | BST_KINT32 | BST_KINT64 | 
@@ -19,16 +19,35 @@ const int64_t BST_KEYS = BST_KPSTR | BST_KINT8 | BST_KINT16 | BST_KINT32 | BST_K
 #define BST_RIGHT_GT -1
 #define BST_LEFT_GT 1
 
-#define likely(x) __builtin_expect(!!(x), 1)
-#define unlikely(x) __builtin_expect(!!(x), 0)
+#define bst_get_height(x) (x != NULL ? x->height : 0)
 
-#define bst_get_height(x) (likely(x != NULL) ? x->height : 0)
-
-#define bst_get_node(node) do {                         \
-    if (unlikely(list_size(bst_node_list) <= 0))        \
+#define bst_new_node(node) do {                         \
+    if (list_size(bst_node_list) <= 0)                  \
        bst_grow_node_pool();                            \
-    list_head(bst_node_list, (void **)(&node), 1);      \
+    list_pop_head(bst_node_list, (void **)(&node));     \
 } while (0)
+
+typedef union bst_key_u {
+    char *pstr;
+    int8_t i8;
+    int16_t i16;
+    int32_t i32;
+    int64_t i64;
+    uint8_t u8;
+    uint16_t u16;
+    uint32_t u32;
+    uint64_t u64;
+    __int128_t i128;
+    struct timeval tv;
+} bst_key_t;
+
+typedef struct bst_node_s {
+    struct bst_node_s *left;
+    struct bst_node_s *right;
+    int64_t height;
+    bst_key_t key;
+    void *data;
+} bst_node_t;
 
 // Globals
 list_t *bst_node_list = NULL;
@@ -41,16 +60,19 @@ static bst_node_t * bst_right_rotate(bst_node_t *y);
 static bst_node_t * bst_left_rotate(bst_node_t *x);
 static void bst_delete_data(bst_tree_t *tree, bst_node_t *node, void *fn_data);
 static void bst_set_key_fn(bst_tree_t *tree, int64_t flags);
+static int32_t bst_print_tree_r(bst_node_t *node, int32_t is_left, int32_t offset, int32_t depth, 
+        int32_t compact, char s[128][512]);
 
 // Callbacks
 void
 tree_free_cb(void *node, void *unused) {
     bst_tree_t *tree = (bst_tree_t *)node;
 
+    // TODO: Remove multiple indexes
+    bst_delete_data(tree, tree->root[0], NULL);
+
     if (tree->name)
         free(tree->name);
-
-    // TODO:  Destroy the node's data 
 }
 
 int8_t
@@ -66,7 +88,7 @@ remove_tree_cb(void *node, void *tree_id) {
     bst_tree_t *tree = (bst_tree_t *)node;
     int32_t *id = (int32_t *)tree_id;
 
-    if (unlikely(tree->id == *id))
+    if (tree->id == *id)
         return LIST_REMOVE;
 
     return LIST_KEEP;
@@ -83,6 +105,7 @@ find_bst_by_name(char *name) {
     while (node) {
         t = (bst_tree_t *)node->data;
         if (!strcmp(t->name, name)) {
+            list_unlock(tree_list);
             return t->id;
         }
         node = node->next;
@@ -182,15 +205,16 @@ bst_create(char *tree_name, bst_free_t free_fn, int64_t flags) {
 }
 
 void *
-bst_fetch(bst_tree_t *tree, int32_t idx, void *key, int32_t *result) {
+bst_fetch(bst_tree_t *tree, int32_t idx, void *key) {
     bst_node_t *node;
+    int32_t rc;
 
     pthread_rwlock_rdlock(&tree->mutex[idx]);
     node = tree->root[idx];
-    *result = BST_RIGHT_GT;
-    while (node && *result != BST_EQUAL) {
-        *result = tree->key_cmp_fn(&node->key, key);
-        switch (*result) {
+    rc = BST_RIGHT_GT;
+    while (node && rc != BST_EQUAL) {
+        rc = tree->key_cmp_fn(&node->key, key);
+        switch (rc) {
             case BST_RIGHT_GT:
                 node = node->right;
                 break;
@@ -207,16 +231,14 @@ bst_fetch(bst_tree_t *tree, int32_t idx, void *key, int32_t *result) {
 static bst_node_t *
 bst_insert_r(bst_tree_t *tree, bst_node_t *node, void *key, void *data) {
     bst_node_t *new_node;
-    int32_t rc;
     int64_t lh, rh;
     int8_t balance_factor;
+    int32_t rc;
 
-    if (unlikely(!node)) {
-        bst_get_node(new_node); 
-        if (likely(new_node)) {
-            tree->key_cpy_fn(&new_node->key, key);
-            new_node->data = data;
-        }
+    if (!node) {
+        bst_new_node(new_node); 
+        tree->key_cpy_fn(&new_node->key, key);
+        new_node->data = data;
         return new_node;
     }
 
@@ -239,19 +261,19 @@ bst_insert_r(bst_tree_t *tree, bst_node_t *node, void *key, void *data) {
     node->height = MAX(lh, rh) + 1;
     balance_factor = lh - rh;
 
-    if (balance_factor > 1 && node->left) {
+    if (balance_factor > 1) {
         rc = tree->key_cmp_fn(&node->left->key, key);
         // Left Left Case
         if (rc == BST_LEFT_GT) {
             return bst_right_rotate(node);
         }
         // Left Right Case
-        if (rc == BST_RIGHT_GT) {
+        else if (rc == BST_RIGHT_GT) {
             node->left = bst_left_rotate(node->left);
             return bst_right_rotate(node);
         }
     }
-    if (balance_factor < -1 && node->right) {
+    else if (balance_factor < -1) {
         rc = tree->key_cmp_fn(&node->right->key, key);
         // Right Right Case
         if (rc == BST_RIGHT_GT) {
@@ -259,7 +281,7 @@ bst_insert_r(bst_tree_t *tree, bst_node_t *node, void *key, void *data) {
         }
     
         // Right Left Case
-        if (rc == BST_LEFT_GT) {
+        else if (rc == BST_LEFT_GT) {
             node->right = bst_right_rotate(node->right);
             return bst_left_rotate(node);
         }
@@ -272,25 +294,27 @@ int32_t
 bst_insert(bst_tree_t *tree, int32_t idx, void *key, void *data) {
     bst_node_t *new_node;
 
-     pthread_rwlock_wrlock(&tree->mutex[idx]);
+    pthread_rwlock_wrlock(&tree->mutex[idx]);
     if ((new_node = bst_insert_r(tree, tree->root[idx], key, data)) == NULL) {
         snprintf(err_str, MAX_ERR_LEN - 1, "Unable to insert new node.  Out of memory?");
         return -1;
     }
     else
         tree->root[idx] = new_node;
+
     pthread_rwlock_unlock(&tree->mutex[idx]);
 
     return 0;
+
 }
 
 void 
 bst_destroy(bst_tree_t *tree, void *fn_data) {
     pthread_rwlock_wrlock(&tree->mutex[0]);
-    bst_delete_data(tree, tree->root[0], fn_data);
-    pthread_rwlock_unlock(&tree->mutex[0]);
     // Remove this tree from the list
     list_remove_if(tree_list, remove_tree_cb, &tree->id, NULL);
+    pthread_rwlock_unlock(&tree->mutex[0]);
+
 }
 
 int32_t
@@ -330,160 +354,73 @@ bst_grow_node_pool() {
             snprintf(err_str, MAX_ERR_LEN - 1, "Unable to allocate memory for node pool");
             return -1;
         }
-        list_append(bst_node_list, node); 
         node->height = 1;
+        list_append(bst_node_list, node); 
     }
 
     return 0;
 }
 
 static int32_t
-bst_key_cmp(bst_key_t *left, bst_key_t *right, int64_t flags) {
-    switch (flags & BST_KEYS) {
-        case BST_KPSTR: 
-            return strcmp(left->pstr, right->pstr);
-        case BST_KINT8:
-            return (left->i8 == right->i8) ? BST_EQUAL : (left->i8 < right->i8) ? 
-                BST_RIGHT_GT : BST_LEFT_GT;
-        case BST_KINT16:
-            return (left->i16 == right->i16) ? BST_EQUAL : (left->i16 < right->i16) ? 
-                BST_RIGHT_GT : BST_LEFT_GT;
-        case BST_KINT32:
-            return (left->i32 == right->i32) ? BST_EQUAL : (left->i32 < right->i32) ? 
-                BST_RIGHT_GT : BST_LEFT_GT;
-        case BST_KINT64:
-            return (left->i64 == right->i64) ? BST_EQUAL : (left->i64 < right->i64) ? 
-                BST_RIGHT_GT : BST_LEFT_GT;
-        case BST_KUINT8:
-            return (left->u8 == right->u8) ? BST_EQUAL : (left->u8 < right->u8) ? 
-                BST_RIGHT_GT : BST_LEFT_GT;
-        case BST_KUINT16:
-            return (left->u16 == right->u16) ? BST_EQUAL : (left->u16 < right->u16) ? 
-                BST_RIGHT_GT : BST_LEFT_GT;
-        case BST_KUINT32:
-            return (left->u32 == right->u32) ? BST_EQUAL : (left->u32 < right->u32) ?
-                BST_RIGHT_GT : BST_LEFT_GT;
-        case BST_KUINT64:
-            return (left->u64 == right->u64) ? BST_EQUAL : (left->u64 < right->u64) ? 
-                BST_RIGHT_GT : BST_LEFT_GT;
-        case BST_KINT128:
-            return (left->i128 == right->i128) ? BST_EQUAL : (left->i128 < right->i128) ? 
-                BST_RIGHT_GT : BST_LEFT_GT;
-        case BST_KTME:
-            if (left->tv.tv_sec != right->tv.tv_sec) {
-                return (left->tv.tv_sec < right->tv.tv_sec) ? BST_RIGHT_GT : BST_LEFT_GT;
-            }
-            if (left->tv.tv_usec != right->tv.tv_usec) {
-                return (left->tv.tv_usec < right->tv.tv_usec) ? BST_RIGHT_GT : BST_LEFT_GT;
-            }
-            return 0;
-        default:
-            return 0;
-    }
-
-    return 0;
-}
-
-static void
-bst_key_cpy(bst_key_t *dst, bst_key_t *src, int64_t flags) {
-    switch (flags & BST_KEYS) {
-        case BST_KPSTR: 
-            strcpy(dst->pstr, src->pstr);
-            break;
-        case BST_KINT8:
-            dst->i8 = src->i8;
-            break;
-        case BST_KINT16:
-            dst->i16 = src->i16;
-            break;
-        case BST_KINT32:
-            dst->i32 = src->i32;
-            break;
-        case BST_KINT64:
-            dst->i64 = src->i64;
-            break;
-        case BST_KUINT8:
-            dst->u8 = src->u8;
-            break;
-        case BST_KUINT16:
-            dst->u16 = src->u16;
-            break;
-        case BST_KUINT32:
-            dst->u32 = src->u32;
-            break;
-        case BST_KUINT64:
-            dst->u64 = src->u64;
-            break;
-        case BST_KINT128:
-            dst->i128 = src->i128;
-            break;
-        case BST_KTME:
-            dst->tv.tv_sec = src->tv.tv_sec;
-            dst->tv.tv_usec = src->tv.tv_usec;
-            break;
-    }
-}
-
-static inline int32_t
 bst_key_cmp_str(bst_key_t *left, bst_key_t *right) {
     return strcmp(left->pstr, right->pstr);
 }
 
-static inline int32_t
+static int32_t
 bst_key_cmp_i8(bst_key_t *left, bst_key_t *right) {
     return (left->i8 == right->i8) ? BST_EQUAL : (left->i8 < right->i8) ?
         BST_RIGHT_GT : BST_LEFT_GT;
 }
 
-static inline int32_t
+static int32_t
 bst_key_cmp_i16(bst_key_t *left, bst_key_t *right) {
     return (left->i16 == right->i16) ? BST_EQUAL : (left->i16 < right->i16) ?
         BST_RIGHT_GT : BST_LEFT_GT;
 }
 
-static inline int32_t
+static int32_t
 bst_key_cmp_i32(bst_key_t *left, bst_key_t *right) {
     return (left->i32 == right->i32) ? BST_EQUAL : (left->i32 < right->i32) ?
         BST_RIGHT_GT : BST_LEFT_GT;
 }
 
-static inline int32_t
+static int32_t
 bst_key_cmp_i64(bst_key_t *left, bst_key_t *right) {
     return (left->i64 == right->i64) ? BST_EQUAL : (left->i64 < right->i64) ?
         BST_RIGHT_GT : BST_LEFT_GT;
 }
 
-static inline int32_t
+static int32_t
 bst_key_cmp_u8(bst_key_t *left, bst_key_t *right) {
     return (left->u8 == right->u8) ? BST_EQUAL : (left->u8 < right->u8) ?
         BST_RIGHT_GT : BST_LEFT_GT;
 }
 
-static inline int32_t
+static int32_t
 bst_key_cmp_u16(bst_key_t *left, bst_key_t *right) {
     return (left->u64 == right->u16) ? BST_EQUAL : (left->u16 < right->u16) ?
         BST_RIGHT_GT : BST_LEFT_GT;
 }
 
-static inline int32_t
+static int32_t
 bst_key_cmp_u32(bst_key_t *left, bst_key_t *right) {
     return (left->u32 == right->u32) ? BST_EQUAL : (left->u32 < right->u32) ?
         BST_RIGHT_GT : BST_LEFT_GT;
 }
 
-static inline int32_t
+static int32_t
 bst_key_cmp_u64(bst_key_t *left, bst_key_t *right) {
     return (left->u64 == right->u64) ? BST_EQUAL : (left->u64 < right->u64) ?
         BST_RIGHT_GT : BST_LEFT_GT;
 }
 
-static inline int32_t
+static int32_t
 bst_key_cmp_i128(bst_key_t *left, bst_key_t *right) {
     return (left->i128 == right->i128) ? BST_EQUAL : (left->i128 < right->i128) ?
         BST_RIGHT_GT : BST_LEFT_GT;
 }
 
-static inline int32_t
+static int32_t
 bst_key_cmp_tme(bst_key_t *left, bst_key_t *right) {
     if (left->tv.tv_sec != right->tv.tv_sec) {
         return (left->tv.tv_sec < right->tv.tv_sec) ? BST_RIGHT_GT : BST_LEFT_GT;
@@ -598,6 +535,7 @@ bst_set_key_fn(bst_tree_t *tree, int64_t flags) {
             break;
         default:
             snprintf(err_str, MAX_ERR_LEN -1, "Can't happen at: %s():%d", __FUNCTION__, __LINE__);
+            break;
     }
 }
 
@@ -629,21 +567,96 @@ bst_left_rotate(bst_node_t *x) {
     return y;
 }
 
-static void
+/*static void
 bst_print_tree_r(bst_node_t *node) {
     if (node != NULL) {
         fprintf(stdout, "%d ", node->key.u32);
         bst_print_tree_r(node->left);
         bst_print_tree_r(node->right);
     }
-}
-
-void
-bst_print_tree(bst_tree_t *tree, int32_t idx) {
-    bst_print_tree_r(tree->root[idx]);
-}
+}*/
 
 char *
 bst_get_last_err() {
     return err_str;
+}
+
+void
+bst_print_tree(bst_tree_t *tree, int32_t idx, int32_t compact) {
+    char s[128][512];
+    char test[101];
+
+    for (int32_t i = 0; i < 20; i++)
+        sprintf(s[i], "%100s", " ");
+
+    bst_print_tree_r(tree->root[idx], 0, 0, 0, compact, s);
+    for (int32_t i = 0; i < 20; i++) {
+        sprintf(test, "%100s", " ");
+        if (strcmp(s[i], test))
+            fprintf(stdout, "%s\n", s[i]);
+    }
+}
+
+static int32_t
+bst_print_tree_r(bst_node_t *node, int is_left, int offset, int depth, int32_t compact,
+        char s[128][512]) {
+    char b[20];
+    int32_t width;
+
+    if (!node) 
+        return 0;
+
+    if (compact) {
+        width = 1;
+        sprintf(b, "x", node->key.i32);
+    }
+    else {
+        width = 5;
+        sprintf(b, "(%03d)", node->key.i32);
+    }
+
+    int32_t left  = bst_print_tree_r(node->left,  1, offset, depth + 1, compact, s);
+    int32_t right = bst_print_tree_r(node->right, 0, offset + left + width, depth + 1, 
+            compact, s);
+
+    if (compact) {
+        for (int i = 0; i < width; i++)
+            s[depth][offset + left + i] = b[i];
+
+        if (depth && is_left) {
+
+            for (int i = 0; i < width + right; i++)
+                s[depth - 1][offset + left + width/2 + i] = '-';
+
+            s[depth - 1][offset + left + width/2] = '.';
+
+        } else if (depth && !is_left) {
+
+            for (int i = 0; i < left + width; i++)
+                s[depth - 1][offset - width/2 + i] = '-';
+
+            s[depth - 1][offset + left + width/2] = '.';
+        }
+    }
+    else {
+        for (int32_t i = 0; i < width; i++)
+            s[2 * depth][offset + left + i] = b[i];
+
+        if (depth && is_left) {
+            for (int i = 0; i < width + right; i++)
+                s[2 * depth - 1][offset + left + width/2 + i] = '-';
+
+            s[2 * depth - 1][offset + left + width/2] = '+';
+            s[2 * depth - 1][offset + left + width + right + width/2] = '+';
+
+        } else if (depth && !is_left) {
+            for (int i = 0; i < left + width; i++)
+                s[2 * depth - 1][offset - width/2 + i] = '-';
+
+            s[2 * depth - 1][offset + left + width/2] = '+';
+            s[2 * depth - 1][offset - width/2 - 1] = '+';
+        }
+    }
+
+    return left + width + right;
 }
