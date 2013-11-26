@@ -51,7 +51,6 @@ typedef struct bst_node_s {
 
 // Globals
 list_t *bst_node_list = NULL;
-int32_t top_tree_id = 0;
 char err_str[MAX_ERR_LEN];
 list_t *tree_list = NULL;
 
@@ -76,27 +75,19 @@ tree_free_cb(void *node, void *unused) {
 }
 
 int8_t
-tree_sort_by_id_cb(void *n1, void *n2) {
-    bst_tree_t *t1 = (bst_tree_t *)n1;
-    bst_tree_t *t2 = (bst_tree_t *)n2;
-
-    return ((t1->id == t2->id) ? 0 : (t1->id < t2->id) ? -1 : 1);
-}
-
-int8_t
-remove_tree_cb(void *node, void *tree_id) {
+remove_tree_cb(void *node, void *data) {
     bst_tree_t *tree = (bst_tree_t *)node;
-    int32_t *id = (int32_t *)tree_id;
+    bst_tree_t *doomed = (bst_tree_t *)data;
 
-    if (tree->id == *id)
+    if (tree == doomed)
         return LIST_REMOVE;
 
     return LIST_KEEP;
 }
 
 // Functions
-int32_t
-find_bst_by_name(char *name) {
+bst_tree_t *
+bst_find_by_name(char *name) {
     bst_tree_t *t;
     list_node_t *node;
     
@@ -106,13 +97,13 @@ find_bst_by_name(char *name) {
         t = (bst_tree_t *)node->data;
         if (!strcmp(t->name, name)) {
             list_unlock(tree_list);
-            return t->id;
+            return t;
         }
         node = node->next;
     }
     list_unlock(tree_list);
 
-    return -1;
+    return NULL;
 }
 
 static bst_tree_t *
@@ -135,49 +126,10 @@ bst_add_tree(char *tree_name, bst_free_t free_fn, uint64_t flags) {
     tree->flags[0] = flags;
     tree->free_fn = free_fn;
 
-    // There is a hole somewhere.
-    if (list_size(tree_list) != top_tree_id) {
-        list_read_lock(tree_list);
-        list_node_t *node = tree_list->head;
-        bst_tree_t *t = NULL;
-        int32_t idx = 0;
-
-        if (!node) {
-            // All previously created trees have been deleted
-            tree->id = 0;
-        }
-        else {
-            tree->id = -1;
-
-            while (node) {
-                t = (bst_tree_t *)node->data;
-                if (t->id != idx) {
-                    tree->id = idx;
-                    break;
-                }
-                node = node->next;
-                idx++;
-            }
-        }
-        list_unlock(tree_list);
-
-        if (tree->id == -1) {
-            snprintf(err_str, MAX_ERR_LEN - 1, "Internal error! (1000)",
-                    tree_name);
-            goto error_return;
-        }
-    }
-    else {
-        tree->id = top_tree_id++;
-    }
-
     if (list_append(tree_list, tree) != 0) {
         snprintf(err_str, MAX_ERR_LEN - 1, "%s", list_get_last_err());
         goto error_return;
     }
-
-    // Always sort the list after an insert.  Things are easier if this list remains in order.
-    list_sort(tree_list, tree_sort_by_id_cb);
 
     bst_set_key_fn(tree, flags);
 
@@ -196,7 +148,7 @@ bst_tree_t *
 bst_create(char *tree_name, bst_free_t free_fn, int64_t flags) {
     int32_t rc;
 
-    if (find_bst_by_name(tree_name) >= 0) {
+    if (bst_find_by_name(tree_name)) {
         snprintf(err_str, MAX_ERR_LEN - 1, "BST with name %s already exists", tree_name);
         return NULL;
     }
@@ -312,7 +264,7 @@ void
 bst_destroy(bst_tree_t *tree, void *fn_data) {
     pthread_rwlock_wrlock(&tree->mutex[0]);
     // Remove this tree from the list
-    list_remove_if(tree_list, remove_tree_cb, &tree->id, NULL);
+    list_remove_if(tree_list, remove_tree_cb, tree, NULL);
     pthread_rwlock_unlock(&tree->mutex[0]);
 
 }

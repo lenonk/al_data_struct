@@ -117,7 +117,6 @@ typedef int32_t (*bst_key_cmp_t)(union bst_key_u *, union bst_key_u *);
 
 typedef struct {
     uint8_t idx_count;
-    int32_t id;
     uint64_t flags[BST_MAX_IDX];
     char *name;
     struct bst_node_s *root[BST_MAX_IDX];
@@ -129,9 +128,9 @@ typedef struct {
 
 int32_t bst_init();
 int32_t bst_fini();
-int32_t find_bst_by_name(char *name);
 int32_t bst_insert(bst_tree_t *tree, int32_t idx, void *key, void *data);
 bst_tree_t *bst_create(char *tree_name, bst_free_t free_fn, int64_t flags);
+bst_tree_t *bst_find_by_name(char *name);
 void *bst_fetch(bst_tree_t *tree, int32_t idx, void *key);
 void *bst_delete(bst_tree_t *tree, int32_t idx, void *key); 
 void bst_destroy(bst_tree_t *tree, void *fn_data);
