@@ -325,7 +325,6 @@ test_bst() {
     populate_array(500000, 0);
     fprintf(stdout, "\n********** RDB TESTS **********\n");
     int32_t rdb_hdl;
-    int32_t tree_hdl;
     t = NULL;
 
     rdbInit();
@@ -344,7 +343,7 @@ test_bst() {
 
     gettimeofday(&now, NULL);
     for (int32_t i = 499999; i >= 0; i--) { 
-        t = rdbGet(tree_hdl, 0, &i);
+        t = rdbGet(rdb_hdl, 0, &i);
     }
     gettimeofday(&later, NULL);
     timersub(&later, &now, &diff);
@@ -352,7 +351,7 @@ test_bst() {
             diff.tv_sec, diff.tv_usec);
 
     gettimeofday(&now, NULL);
-    rdbFlush(tree_hdl, NULL, NULL);
+    rdbFlush(rdb_hdl, NULL, NULL);
     gettimeofday(&later, NULL);
     timersub(&later, &now, &diff);
     fprintf(stdout, "Time to destroy tree: %ld seconds, %ld microseconds\n", 
