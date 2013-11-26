@@ -80,7 +80,7 @@ tree_sort_by_id_cb(void *n1, void *n2) {
     bst_tree_t *t1 = (bst_tree_t *)n1;
     bst_tree_t *t2 = (bst_tree_t *)n2;
 
-    return ((t1->id == t2->id) ? 0 : (t1->id > t2->id) ? -1 : 1);
+    return ((t1->id == t2->id) ? 0 : (t1->id < t2->id) ? -1 : 1);
 }
 
 int8_t
