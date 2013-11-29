@@ -9,7 +9,7 @@
 #include "al_data_struct.h"
 
 // Defines
-#define BST_NODE_POOL_SZ 512000
+#define BST_NODE_POOL_SZ 1024000
 #define MAX_ERR_LEN 2048
 
 const int64_t BST_KEYS = BST_KPSTR | BST_KINT8 | BST_KINT16 | BST_KINT32 | BST_KINT64 | 
@@ -21,11 +21,41 @@ const int64_t BST_KEYS = BST_KPSTR | BST_KINT8 | BST_KINT16 | BST_KINT32 | BST_K
 
 #define bst_get_height(x) (x != NULL ? x->height : 0)
 
+#ifndef NO_LOCKS 
 #define bst_new_node(node) do {                         \
-    if (list_size(bst_node_list) <= 0)                  \
-       bst_grow_node_pool();                            \
-    list_pop_head(bst_node_list, (void **)(&node));     \
+    if (!bst_node_list)                                 \
+        bst_create_node_pool();                         \
+    pthread_rwlock_wrlock(&node_list_mutex);            \
+    node = bst_node_list;                               \
+    bst_node_list = bst_node_list->right;               \
+    node->right = NULL;                                 \
+    pthread_rwlock_unlock(&node_list_mutex);            \
+ } while (0)
+#else
+#define bst_new_node(node) do {                         \
+    if (!bst_node_list)                                 \
+        bst_create_node_pool();                         \
+    node = bst_node_list;                               \
+    bst_node_list = bst_node_list->right;               \
+    node->right = NULL;                                 \
+ } while (0)
+#endif
+
+#ifndef NO_LOCKS
+#define bst_free_node(node) do {                        \
+    pthread_rwlock_wrlock(&node_list_mutex);            \
+    node->right = bst_node_list;                        \
+    node->left = NULL;                                  \
+    bst_node_list = node;                               \
+    pthread_rwlock_unlock(&node_list_mutex);            \
 } while (0)
+#else
+#define bst_free_node(node) do {                        \
+    node->right = bst_node_list;                        \
+    node->left = NULL;                                  \
+    bst_node_list = node;                               \
+} while (0)
+#endif
 
 typedef union bst_key_u {
     char *pstr;
@@ -44,21 +74,23 @@ typedef union bst_key_u {
 typedef struct bst_node_s {
     struct bst_node_s *left;
     struct bst_node_s *right;
-    int64_t height;
+    int8_t height;
     bst_key_t key;
     void *data;
 } bst_node_t;
 
 // Globals
-list_t *bst_node_list = NULL;
+bst_node_t *bst_node_list;
+pthread_rwlock_t node_list_mutex = PTHREAD_RWLOCK_INITIALIZER;
 char err_str[MAX_ERR_LEN];
 list_t *tree_list = NULL;
 
-static int32_t bst_grow_node_pool();
+static int32_t bst_create_node_pool();
 static bst_node_t * bst_right_rotate(bst_node_t *y);
 static bst_node_t * bst_left_rotate(bst_node_t *x);
-static void bst_delete_data(bst_tree_t *tree, bst_node_t *node, void *fn_data);
-static void bst_set_key_fn(bst_tree_t *tree, int64_t flags);
+static void bst_delete_data(bst_node_t *node, bst_free_t free_fn, void *fn_data);
+static void bst_set_key_fn_ptrs(bst_tree_t *tree, int64_t flags);
+static void bst_free_node_pool();
 static int32_t bst_print_tree_r(bst_node_t *node, int32_t is_left, int32_t offset, int32_t depth, 
         int32_t compact, char s[128][512]);
 
@@ -68,7 +100,9 @@ tree_free_cb(void *node, void *unused) {
     bst_tree_t *tree = (bst_tree_t *)node;
 
     // TODO: Remove multiple indexes
-    bst_delete_data(tree, tree->root[0], NULL);
+    for (int32_t i = 0; i < tree->idx_count; i++) {
+        bst_delete_data(tree->root[i], tree->free_fn[i], NULL);
+    }
 
     if (tree->name)
         free(tree->name);
@@ -106,32 +140,41 @@ bst_find_by_name(char *name) {
     return NULL;
 }
 
-static bst_tree_t *
-bst_add_tree(char *tree_name, bst_free_t free_fn, uint64_t flags) {
-    bst_tree_t *tree = NULL;
+bst_tree_t *
+bst_create(char *tree_name, bst_free_t free_fn, int64_t flags) {
+    int32_t rc;
+    bst_tree_t *tree;
+
+    if (bst_find_by_name(tree_name)) {
+        snprintf(err_str, MAX_ERR_LEN - 1, "BST with name %s already exists", tree_name);
+        return NULL;
+    }
 
     // Create a new tree
     if ((tree = calloc(1, sizeof(bst_tree_t))) == NULL) {
-        snprintf(err_str, MAX_ERR_LEN - 1, "Cannot allocate memory for new tree", tree_name);
+        snprintf(err_str, MAX_ERR_LEN - 1, "Cannot allocate memory for new tree");
         goto error_return;
     }
 
-    if ((tree->name = malloc(strlen(tree_name))) == NULL) {
-        snprintf(err_str, MAX_ERR_LEN - 1, "Cannot allocate memory for new tree name", tree_name);
-        goto error_return;
+    if (tree_name) {
+        if ((tree->name = malloc(strlen(tree_name))) == NULL) {
+            snprintf(err_str, MAX_ERR_LEN - 1, "Cannot allocate memory for new tree name");
+            goto error_return;
+        }
+
+        strcpy(tree->name, tree_name);
     }
 
-    strcpy(tree->name, tree_name);
     tree->idx_count = 1;
     tree->flags[0] = flags;
-    tree->free_fn = free_fn;
+    tree->free_fn[0] = free_fn;
 
     if (list_append(tree_list, tree) != 0) {
         snprintf(err_str, MAX_ERR_LEN - 1, "%s", list_get_last_err());
         goto error_return;
     }
 
-    bst_set_key_fn(tree, flags);
+    bst_set_key_fn_ptrs(tree, flags);
 
     return tree;
 
@@ -144,26 +187,26 @@ error_return:
     return NULL;
 }
 
-bst_tree_t *
-bst_create(char *tree_name, bst_free_t free_fn, int64_t flags) {
-    int32_t rc;
+int32_t
+bst_add_idx(bst_tree_t *tree, bst_free_t free_fn, int64_t flags) {
+    int8_t idx = tree->idx_count++;
 
-    if (bst_find_by_name(tree_name)) {
-        snprintf(err_str, MAX_ERR_LEN - 1, "BST with name %s already exists", tree_name);
-        return NULL;
-    }
+    tree->root[idx] = NULL;
+    tree->flags[idx] = flags;
+    tree->free_fn[idx] = free_fn;
 
-    return bst_add_tree(tree_name, free_fn, flags);
+    return idx;
 }
 
 void *
 bst_fetch(bst_tree_t *tree, int32_t idx, void *key) {
     bst_node_t *node;
-    int32_t rc;
+    int32_t rc = -1;
 
+#ifndef NO_LOCKS
     pthread_rwlock_rdlock(&tree->mutex[idx]);
+#endif
     node = tree->root[idx];
-    rc = BST_RIGHT_GT;
     while (node && rc != BST_EQUAL) {
         rc = tree->key_cmp_fn(&node->key, key);
         switch (rc) {
@@ -175,7 +218,9 @@ bst_fetch(bst_tree_t *tree, int32_t idx, void *key) {
                 break;
         }
     }
+#ifndef NO_LOCKS
     pthread_rwlock_unlock(&tree->mutex[idx]);
+#endif
 
     return (node ? node->data : NULL);
 }
@@ -184,56 +229,59 @@ static bst_node_t *
 bst_insert_r(bst_tree_t *tree, bst_node_t *node, void *key, void *data) {
     bst_node_t *new_node;
     int64_t lh, rh;
-    int8_t balance_factor;
     int32_t rc;
+    static int32_t rotated = 0;
 
     if (!node) {
-        bst_new_node(new_node); 
-        tree->key_cpy_fn(&new_node->key, key);
-        new_node->data = data;
-        return new_node;
+         bst_new_node(new_node); 
+         tree->key_cpy_fn(&new_node->key, key);
+         new_node->data = data;
+         rotated = 0;
+         return new_node;
     }
 
     rc = tree->key_cmp_fn(&node->key, key);
-    if (rc == BST_LEFT_GT) {
-         if (!(node->left = bst_insert_r(tree, node->left, key, data)))
-             return NULL;
-    }
+    if (rc == BST_LEFT_GT)
+         node->left = bst_insert_r(tree, node->left, key, data);
     else if (rc == BST_RIGHT_GT) {
-         if (!(node->right = bst_insert_r(tree, node->right, key, data)))
-             return NULL;
+         node->right = bst_insert_r(tree, node->right, key, data);
     }
     else {
         // TODO:  Handle duplicate key
+    }
+
+    // If we've already done our rotations, just return from here
+    if (rotated) {
+        return node;
     }
 
     lh = bst_get_height(node->left);
     rh = bst_get_height(node->right);
 
     node->height = MAX(lh, rh) + 1;
-    balance_factor = lh - rh;
 
-    if (balance_factor > 1) {
+    if ((lh - rh) > 1) {
+        rotated = 1;
         rc = tree->key_cmp_fn(&node->left->key, key);
         // Left Left Case
         if (rc == BST_LEFT_GT) {
             return bst_right_rotate(node);
         }
         // Left Right Case
-        else if (rc == BST_RIGHT_GT) {
+        else {
             node->left = bst_left_rotate(node->left);
             return bst_right_rotate(node);
         }
     }
-    else if (balance_factor < -1) {
+    else if ((lh - rh) < -1) {
+        rotated = 1;
         rc = tree->key_cmp_fn(&node->right->key, key);
         // Right Right Case
         if (rc == BST_RIGHT_GT) {
             return bst_left_rotate(node);
         }
-    
         // Right Left Case
-        else if (rc == BST_LEFT_GT) {
+        else {
             node->right = bst_right_rotate(node->right);
             return bst_left_rotate(node);
         }
@@ -246,71 +294,59 @@ int32_t
 bst_insert(bst_tree_t *tree, int32_t idx, void *key, void *data) {
     bst_node_t *new_node;
 
+#ifndef NO_LOCKS
     pthread_rwlock_wrlock(&tree->mutex[idx]);
+#endif
     if ((new_node = bst_insert_r(tree, tree->root[idx], key, data)) == NULL) {
         snprintf(err_str, MAX_ERR_LEN - 1, "Unable to insert new node.  Out of memory?");
         return -1;
     }
-    else
-        tree->root[idx] = new_node;
 
+    tree->root[idx] = new_node;
+
+#ifndef NO_LOCKS
     pthread_rwlock_unlock(&tree->mutex[idx]);
+#endif
 
     return 0;
-
 }
 
 void 
 bst_destroy(bst_tree_t *tree, void *fn_data) {
+#ifndef NO_LOCKS
     pthread_rwlock_wrlock(&tree->mutex[0]);
+#endif
     // Remove this tree from the list
     list_remove_if(tree_list, remove_tree_cb, tree, NULL);
+#ifndef NO_LOCKS
     pthread_rwlock_unlock(&tree->mutex[0]);
+#endif
 
 }
 
 int32_t
 bst_init() {
     list_create(&tree_list, tree_free_cb);
-    return bst_grow_node_pool();
+    return bst_create_node_pool();
 }
 
 int32_t
 bst_fini() {
-    list_destroy(bst_node_list, NULL);
+    bst_free_node_pool();
     list_destroy(tree_list, NULL);
     return 0;
 }
 
 static void
-bst_delete_data(bst_tree_t *tree, bst_node_t *node, void *fn_data) {
+bst_delete_data(bst_node_t *node, bst_free_t free_fn, void *fn_data) {
     if (node != NULL) {
-        bst_delete_data(tree, node->left, fn_data);
-        bst_delete_data(tree, node->right, fn_data);
-        if (tree->free_fn)
-            tree->free_fn(node, fn_data);
+        bst_delete_data(node->left, free_fn, fn_data);
+        bst_delete_data(node->right, free_fn, fn_data);
+        if (free_fn)
+            free_fn(node, fn_data);
         else
             free(node->data);
     }
-}
-
-static int32_t
-bst_grow_node_pool() {
-    bst_node_t *node = NULL;
-
-    if (!bst_node_list)
-        list_create(&bst_node_list, NULL);
-
-    for (int32_t i = 0; i < BST_NODE_POOL_SZ; i++) {
-        if ((node = calloc(1, sizeof(bst_node_t))) == NULL) {
-            snprintf(err_str, MAX_ERR_LEN - 1, "Unable to allocate memory for node pool");
-            return -1;
-        }
-        node->height = 1;
-        list_append(bst_node_list, node); 
-    }
-
-    return 0;
 }
 
 static int32_t
@@ -390,42 +426,42 @@ bst_key_cpy_str(bst_key_t *dst, bst_key_t *src) {
 
 static void
 bst_key_cpy_i8(bst_key_t *dst, bst_key_t *src) {
-    dst->i8 = src->i8;
+    memcpy(dst, src, sizeof(int8_t));
 }
 
 static void
 bst_key_cpy_i16(bst_key_t *dst, bst_key_t *src) {
-    dst->i16 = src->i16;
+    memcpy(dst, src, sizeof(int16_t));
 }
 
 static void
 bst_key_cpy_i32(bst_key_t *dst, bst_key_t *src) {
-    dst->i32 = src->i32;
+    memcpy(dst, src, sizeof(int32_t));
 }
 
 static void
 bst_key_cpy_i64(bst_key_t *dst, bst_key_t *src) {
-    dst->i64 = src->i64;
+    memcpy(dst, src, sizeof(int64_t));
 }
 
 static void
 bst_key_cpy_u8(bst_key_t *dst, bst_key_t *src) {
-    dst->u8 = src->u8;
+    memcpy(dst, src, sizeof(uint8_t));
 }
 
 static void
 bst_key_cpy_u16(bst_key_t *dst, bst_key_t *src) {
-    dst->u16 = src->u16;
+    memcpy(dst, src, sizeof(uint16_t));
 }
 
 static void
 bst_key_cpy_u32(bst_key_t *dst, bst_key_t *src) {
-    dst->u32 = src->u32;
+    memcpy(dst, src, sizeof(uint32_t));
 }
 
 static void
 bst_key_cpy_u64(bst_key_t *dst, bst_key_t *src) {
-    dst->u64 = src->u64;
+    memcpy(dst, src, sizeof(uint64_t));
 }
 
 static void
@@ -439,7 +475,7 @@ bst_key_cpy_tme(bst_key_t *dst, bst_key_t *src) {
 }
 
 static void
-bst_set_key_fn(bst_tree_t *tree, int64_t flags) {
+bst_set_key_fn_ptrs(bst_tree_t *tree, int64_t flags) {
     switch (flags & BST_KEYS) {
         case BST_KPSTR:
             tree->key_cmp_fn = bst_key_cmp_str;
@@ -531,6 +567,43 @@ bst_print_tree_r(bst_node_t *node) {
 char *
 bst_get_last_err() {
     return err_str;
+}
+
+static int32_t
+bst_create_node_pool() {
+    bst_node_t *node = NULL;
+
+    pthread_rwlock_wrlock(&node_list_mutex);
+    for (uint32_t j = 0; j < BST_NODE_POOL_SZ; j++) {
+        if ((node = calloc(1, sizeof(bst_node_t))) == NULL) {
+            snprintf(err_str, MAX_ERR_LEN -1, "%s: Could not allocate memory for bst node",
+                    __FUNCTION__);
+            pthread_rwlock_unlock(&node_list_mutex);
+            return -1;
+        }
+
+        node->height = 1;
+        node->right = bst_node_list;
+        bst_node_list = node;
+
+    }
+    pthread_rwlock_unlock(&node_list_mutex);
+
+    return 0;
+}
+
+static void
+bst_free_node_pool() {
+    bst_node_t *n, *head;
+
+    pthread_rwlock_wrlock(&node_list_mutex);
+    head = bst_node_list;
+    while (head) {
+        n = head->right;
+        free(head);
+        head = n;
+    }
+    pthread_rwlock_unlock(&node_list_mutex);
 }
 
 void

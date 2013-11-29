@@ -115,7 +115,7 @@ populate_array(int32_t n_elm, int8_t randomize) {
             t->a = i;
         else
             t->a = i + random();
-         t->b = 256;
+         t->b = (n_elm - 1) - i;
          t->c = 512;
          t->d = 1024;
 
@@ -275,52 +275,76 @@ test_bst() {
 
     bst_init();
 
-    populate_array(100, 0);
-    fprintf(stdout, "*********************************** 200 element tree visualized:\n");
-    tree = bst_create("The Tree", delete_node_cb, BST_KINT32);
+    // Visualize 100
+    populate_array(100, 1);
+    fprintf(stdout, "*********************************** 100 element tree visualized:\n");
+    tree = bst_create(NULL, delete_node_cb, BST_KINT32);
     for (uint32_t i = 0; i < 100; i++) {
         bst_insert(tree, 0, &tarr[i]->a, tarr[i]);
     }
     bst_print_tree(tree, 0, 1);
     bst_destroy(tree, NULL);
 
+    // Visualize 20
     populate_array(20, 0);
     fprintf(stdout, "\n*********************************** 20 element tree visualized:\n");
-    tree = bst_create("The Tree", delete_node_cb, BST_KINT32);
+    tree = bst_create(NULL, delete_node_cb, BST_KINT32);
     for (uint32_t i = 0; i < 20; i++) {
         bst_insert(tree, 0, &tarr[i]->a, tarr[i]);
     }
     bst_print_tree(tree, 0, 0);
     bst_destroy(tree, NULL);
 
+    // Insert 500k
     populate_array(500000, 0);
-    tree = bst_create("The Tree", delete_node_cb, BST_KINT32);
+    tree = bst_create(NULL, delete_node_cb, BST_KINT32);
     gettimeofday(&now, NULL);
     for (uint32_t i = 0; i < 500000; i++) {
         bst_insert(tree, 0, &tarr[i]->a, tarr[i]);
     }
     gettimeofday(&later, NULL);
-
     timersub(&later, &now, &diff);
-    fprintf(stdout, "\n500k records inserted in: %ld seconds, %ld microseconds\n",
+    fprintf(stdout, "\n500k records inserted into idx 0 in: %ld seconds, %ld microseconds\n",
             diff.tv_sec, diff.tv_usec);
 
+    // Insert 500k
+    bst_add_idx(tree, delete_node_cb, BST_KINT32);
     gettimeofday(&now, NULL);
-    for (int32_t i = 499999; i >= 0; i--) { 
-        t = bst_fetch(tree, 0, &i);
+    for (uint32_t i = 0; i < 500000; i++) {
+        bst_insert(tree, 1, &tarr[i]->b, tarr[i]);
     }
     gettimeofday(&later, NULL);
     timersub(&later, &now, &diff);
-    fprintf(stdout, "Time to find 500k nodes: %ld seconds, %ld microseconds\n", 
+    fprintf(stdout, "500k records inserted into idx 1 in: %ld seconds, %ld microseconds\n",
             diff.tv_sec, diff.tv_usec);
 
+    // Fetch 500k
+    gettimeofday(&now, NULL);
+    for (int32_t i = 499999; i >= 0; i--) { 
+        bst_fetch(tree, 0, &i);
+    }
+    gettimeofday(&later, NULL);
+    timersub(&later, &now, &diff);
+    fprintf(stdout, "Time to find 500k nodes on idx 0: %ld seconds, %ld microseconds\n", 
+            diff.tv_sec, diff.tv_usec);
+
+    // Fetch 500k
+    gettimeofday(&now, NULL);
+    for (int32_t i = 499999; i >= 0; i--) {  
+        bst_fetch(tree, 1, &i);
+    }
+    gettimeofday(&later, NULL);
+    timersub(&later, &now, &diff);
+    fprintf(stdout, "Time to find 500k nodes on idx 1: %ld seconds, %ld microseconds\n", 
+            diff.tv_sec, diff.tv_usec);
+
+    // Destroy
     gettimeofday(&now, NULL);
     bst_destroy(tree, NULL);
     gettimeofday(&later, NULL);
     timersub(&later, &now, &diff);
     fprintf(stdout, "Time to destroy tree: %ld seconds, %ld microseconds\n", 
             diff.tv_sec, diff.tv_usec);
-
 
     populate_array(500000, 0);
     fprintf(stdout, "\n********** RDB TESTS **********\n");
@@ -343,7 +367,7 @@ test_bst() {
 
     gettimeofday(&now, NULL);
     for (int32_t i = 499999; i >= 0; i--) { 
-        t = rdbGet(rdb_hdl, 0, &i);
+        rdbGet(rdb_hdl, 0, &i);
     }
     gettimeofday(&later, NULL);
     timersub(&later, &now, &diff);

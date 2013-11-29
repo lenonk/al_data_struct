@@ -104,7 +104,6 @@ char *list_get_last_err();
 
 #define BST_MAX_IDX 16
 
-
 struct bst_node_s;
 union bst_key_u;
 
@@ -120,7 +119,7 @@ typedef struct {
     uint64_t flags[BST_MAX_IDX];
     char *name;
     struct bst_node_s *root[BST_MAX_IDX];
-    bst_free_t free_fn;
+    bst_free_t free_fn[BST_MAX_IDX];
     bst_key_cpy_t key_cpy_fn;
     bst_key_cmp_t key_cmp_fn;
     pthread_rwlock_t mutex[BST_MAX_IDX];
@@ -128,6 +127,7 @@ typedef struct {
 
 int32_t bst_init();
 int32_t bst_fini();
+int32_t bst_add_idx(bst_tree_t *tree, bst_free_t free_fn, int64_t flags);
 int32_t bst_insert(bst_tree_t *tree, int32_t idx, void *key, void *data);
 bst_tree_t *bst_create(char *tree_name, bst_free_t free_fn, int64_t flags);
 bst_tree_t *bst_find_by_name(char *name);
