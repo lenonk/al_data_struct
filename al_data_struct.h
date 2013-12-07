@@ -104,6 +104,11 @@ char *list_get_last_err();
 
 #define BST_MAX_IDX 16
 
+#define BST_CB_OK 0
+#define BST_CB_ABORT 1
+#define BST_CB_DELETE_NODE 2
+#define BST_CB_DELETE_AND_ABORT 3
+
 struct bst_node_s;
 union bst_key_u;
 
@@ -113,6 +118,7 @@ union bst_key_u;
 typedef void (*bst_free_t)(void *, void*);
 typedef void (*bst_key_cpy_t)(union bst_key_u *, union bst_key_u *);
 typedef int32_t (*bst_key_cmp_t)(union bst_key_u *, union bst_key_u *);
+typedef int32_t (*bst_iterate_t)(void *, void *);
 
 typedef struct {
     uint8_t idx_count;
@@ -129,6 +135,7 @@ int32_t bst_init();
 int32_t bst_fini();
 int32_t bst_add_idx(bst_tree_t *tree, bst_free_t free_fn, int64_t flags);
 int32_t bst_insert(bst_tree_t *tree, int32_t idx, void *key, void *data);
+int32_t bst_iterate(bst_tree_t *tree, int32_t idx, bst_iterate_t iter_fn, void *fn_data);
 bst_tree_t *bst_create(char *tree_name, bst_free_t free_fn, int64_t flags);
 bst_tree_t *bst_find_by_name(char *name);
 void *bst_fetch(bst_tree_t *tree, int32_t idx, void *key);

@@ -265,6 +265,15 @@ int32_t test_list() {
 }
 
 int32_t
+bst_iterate_cb(void *node, void *data) {
+    test_struct_t *t = (test_struct_t *)node;
+
+    fprintf(stdout, "idx: %d\n", t->a);
+
+    return BST_CB_OK;
+}
+
+int32_t
 test_bst() {
     test_struct_t *t = NULL;
 
@@ -283,6 +292,7 @@ test_bst() {
         bst_insert(tree, 0, &tarr[i]->a, tarr[i]);
     }
     bst_print_tree(tree, 0, 1);
+    //bst_iterate(tree, 0, bst_iterate_cb, NULL);
     bst_destroy(tree, NULL);
 
     // Visualize 20
