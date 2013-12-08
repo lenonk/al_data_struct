@@ -340,7 +340,7 @@ test_bst() {
 
     // Fetch 500k
     gettimeofday(&now, NULL);
-    for (int32_t i = 499999; i >= 0; i--) {  
+    for (int32_t i = 0; i < 500000; i++) {  
         bst_fetch(tree, 1, &i);
     }
     gettimeofday(&later, NULL);
