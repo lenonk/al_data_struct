@@ -17,7 +17,17 @@ typedef struct {
     int32_t ftr_magic;
 } test_struct_t;
 
+typedef struct {
+    int32_t a;
+    int32_t hdr_magic;
+    int32_t b;
+    int32_t c;
+    int32_t d;
+    int32_t ftr_magic;
+} new_test_struct_t;
+
 test_struct_t *tarr[10000000];
+new_test_struct_t *new_tarr[10000000];
 
 int8_t
 list_count_cb(void *node, void *data) {
@@ -120,6 +130,30 @@ populate_array(int32_t n_elm, int8_t randomize) {
          t->d = 1024;
 
          tarr[i] = t;
+    }
+}
+
+int32_t
+new_populate_array(int32_t n_elm, int8_t randomize) {
+    new_test_struct_t *t = NULL;
+    
+    // Populate the list with pointers to test structures
+    for (int32_t i = 0; i < n_elm; i++) {
+        if ((t = calloc(1, sizeof(new_test_struct_t))) == NULL) {
+            fprintf(stdout, "Error:  Unable to allocate memory for test structures.\n");
+            return -1;
+        }
+        t->hdr_magic = HDR_MAGIC;
+        t->ftr_magic = FTR_MAGIC;
+        if (!randomize)
+            t->a = i;
+        else
+            t->a = i + random();
+         t->b = 256;
+         t->c = 512;
+         t->d = 1024;
+
+         new_tarr[i] = t;
     }
 }
 
@@ -390,6 +424,47 @@ test_bst() {
     timersub(&later, &now, &diff);
     fprintf(stdout, "Time to destroy tree: %ld seconds, %ld microseconds\n", 
             diff.tv_sec, diff.tv_usec);
+
+
+    new_populate_array(500000, 0);
+    fprintf(stdout, "\n********** NEW RDB TESTS **********\n");
+    rdb_new_pool_t *new_rdb_hdl;
+    int32_t new_tree_hdl;
+    t = NULL;
+
+    //rdbInit();
+
+    new_rdb_hdl = rdbRegisterNewPool("The New Tree", 1, 0, RDB_KINT32 | RDB_KASC | RDB_BTREE,NULL);
+
+    gettimeofday(&now, NULL);
+    for (uint32_t i = 0; i < 500000; i++) {
+        //free(malloc(100));
+        rdbNewInsert(new_rdb_hdl, new_tarr[i]);
+    }
+    gettimeofday(&later, NULL);
+    //printf("Loops %ld\n",rdbLoops());
+    //printf("Rouates %ld\n",rdbRotates());
+
+    timersub(&later, &now, &diff);
+    fprintf(stdout, "500k records inserted in: %ld seconds, %ld microseconds\n",
+            diff.tv_sec, diff.tv_usec);
+
+    gettimeofday(&now, NULL);
+    for (int32_t i = 499999; i >= 0; i--) { 
+        rdbTreeGetFast(new_rdb_hdl, 0, &i, new_rdb_hdl->root[0]);
+    }
+    gettimeofday(&later, NULL);
+    timersub(&later, &now, &diff);
+    fprintf(stdout, "Time to find 500k nodes: %ld seconds, %ld microseconds\n", 
+            diff.tv_sec, diff.tv_usec);
+
+    gettimeofday(&now, NULL);
+    //rdbFlush(tree_hdl, NULL, NULL);
+    gettimeofday(&later, NULL);
+    timersub(&later, &now, &diff);
+    fprintf(stdout, "Time to destroy tree: %ld seconds, %ld microseconds\n", 
+            diff.tv_sec, diff.tv_usec);
+
 }
 
 int32_t
