@@ -221,6 +221,7 @@ bst_add_idx(bst_tree_t *tree, bst_free_t free_fn, int64_t flags) {
 void *
 bst_fetch(bst_tree_t *tree, int32_t idx, void *key) {
     bst_node_t *node;
+    bst_key_t *needle = (bst_key_t *)key;
     int32_t rc = -1;
 
     if (idx >= tree->idx_count) {
@@ -231,18 +232,14 @@ bst_fetch(bst_tree_t *tree, int32_t idx, void *key) {
     pthread_rwlock_rdlock(&tree->mutex[idx]);
 #endif
     node = tree->root[idx];
-    while (node && rc != BST_EQUAL) {
-        rc = tree->key_cmp_fn(&node->key, key);
-        switch (rc) {
-            case BST_EQUAL:
-                break;
-            case BST_RIGHT_GT:
-                node = node->right;
-                break;
-            case BST_LEFT_GT:
-                node = node->left;
-                break;
-        }
+    while (node) {
+        rc = tree->key_cmp_fn(&node->key, needle);
+        if (rc == BST_RIGHT_GT)
+            node = node->right;
+        else if (rc == BST_LEFT_GT)
+            node = node->left;
+        else
+            break;
     }
 #ifndef NO_LOCKS
     pthread_rwlock_unlock(&tree->mutex[idx]);
